@@ -17,7 +17,6 @@ import org.springframework.stereotype.Service;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -85,25 +84,29 @@ public class PreviewService {
             // Stop previous preview
             stopPreview(projectId);
 
-            // Create temp directory
-            Path rootDirectory = Files.createTempDirectory(
-                    "prompt2web-" + project.getId() + "-"
-            );
+            // Create temporary project directory
+            Path rootDirectory =
+                    Files.createTempDirectory(
+                            "prompt2web-"
+                                    + project.getId()
+                                    + "-"
+                    );
 
             previewDirectories.put(
                     projectId,
                     rootDirectory
             );
 
-            // Create secure random preview token
-            String token = UUID.randomUUID().toString();
+            // Create preview token
+            String token =
+                    UUID.randomUUID().toString();
 
             previewTokens.put(
                     projectId,
                     token
             );
 
-            // Write project files
+            // Write all generated project files
             for (ProjectFile file : files) {
 
                 writeProjectFile(
@@ -112,7 +115,17 @@ public class PreviewService {
                 );
             }
 
-            // Public proxy path
+            // Make sure package.json exists
+            createPackageJsonIfMissing(
+                    rootDirectory
+            );
+
+            // Make sure index.html exists
+            createIndexHtmlIfMissing(
+                    rootDirectory
+            );
+
+            // Public preview path
             String previewBasePath =
                     "/api/projects/"
                             + projectId
@@ -120,31 +133,37 @@ public class PreviewService {
                             + token
                             + "/";
 
-            // Create Vite config
+            // Create Vite configuration
             createViteConfig(
                     rootDirectory,
                     previewBasePath
             );
 
-            // Make sure index.html exists
-            createIndexHtmlIfMissing(rootDirectory);
-
-            // Find port
-            int port = findAvailablePort();
+            // Find available port
+            int port =
+                    findAvailablePort();
 
             previewPorts.put(
                     projectId,
                     port
             );
 
-            // Install dependencies
+            // ====================================================
+            // NPM INSTALL
+            // ====================================================
+
             System.out.println(
                     "[Preview] Running npm install..."
             );
 
-            runNpmInstall(rootDirectory);
+            runNpmInstall(
+                    rootDirectory
+            );
 
-            // Start Vite
+            // ====================================================
+            // START VITE
+            // ====================================================
+
             System.out.println(
                     "[Preview] Starting Vite..."
             );
@@ -160,12 +179,14 @@ public class PreviewService {
                     viteProcess
             );
 
-            // Give Vite time to initialize
+            // Give Vite time to start
             Thread.sleep(3000);
 
             if (!viteProcess.isAlive()) {
 
-                runningProcesses.remove(projectId);
+                runningProcesses.remove(
+                        projectId
+                );
 
                 throw new RuntimeException(
                         "Vite server stopped unexpectedly."
@@ -200,113 +221,62 @@ public class PreviewService {
 
 
     // ============================================================
-    // PROXY PREVIEW REQUEST
+    // CREATE PACKAGE.JSON
     // ============================================================
 
-    public ResponseEntity<byte[]> proxyPreview(
-            String projectId,
-            String token,
-            String path,
-            HttpServletRequest request
-    ) {
+    private void createPackageJsonIfMissing(
+            Path rootDirectory
+    ) throws IOException {
 
-        String storedToken =
-                previewTokens.get(projectId);
+        Path packageJson =
+                rootDirectory.resolve(
+                        "package.json"
+                );
 
-        Integer port =
-                previewPorts.get(projectId);
+        // If AI generated package.json,
+        // don't overwrite it.
+        if (Files.exists(packageJson)) {
 
-        Process process =
-                runningProcesses.get(projectId);
+            System.out.println(
+                    "[Preview] package.json already exists"
+            );
 
-        if (storedToken == null
-                || !storedToken.equals(token)
-                || port == null
-                || process == null
-                || !process.isAlive()) {
-
-            return ResponseEntity.notFound().build();
+            return;
         }
 
-        try {
+        String packageContent = """
+                {
+                  "name": "prompt2web-preview",
+                  "private": true,
+                  "version": "1.0.0",
+                  "type": "module",
+                  "scripts": {
+                    "dev": "vite"
+                  },
+                  "dependencies": {
+                    "react": "^18.3.1",
+                    "react-dom": "^18.3.1",
+                    "react-router-dom": "^6.28.0",
+                    "lucide-react": "^0.468.0"
+                  },
+                  "devDependencies": {
+                    "@vitejs/plugin-react": "^4.3.4",
+                    "vite": "^5.4.11"
+                  }
+                }
+                """;
 
-            String targetPath = "/";
+        Files.writeString(
+                packageJson,
+                packageContent,
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING
+        );
 
-            if (path != null && !path.isBlank()) {
-
-                targetPath =
-                        path.startsWith("/")
-                                ? path
-                                : "/" + path;
-            }
-
-            String query =
-                    request.getQueryString();
-
-            String targetUrl =
-                    "http://127.0.0.1:"
-                            + port
-                            + targetPath;
-
-            if (query != null && !query.isBlank()) {
-                targetUrl += "?" + query;
-            }
-
-            HttpClient client =
-                    HttpClient.newHttpClient();
-
-            HttpRequest httpRequest =
-                    HttpRequest.newBuilder()
-                            .uri(URI.create(targetUrl))
-                            .GET()
-                            .build();
-
-            HttpResponse<byte[]> response =
-                    client.send(
-                            httpRequest,
-                            HttpResponse.BodyHandlers.ofByteArray()
-                    );
-
-            HttpHeaders headers =
-                    new HttpHeaders();
-
-            response.headers()
-                    .firstValue("Content-Type")
-                    .ifPresent(
-                            value ->
-                                    headers.set(
-                                            "Content-Type",
-                                            value
-                                    )
-                    );
-
-            response.headers()
-                    .firstValue("Cache-Control")
-                    .ifPresent(
-                            value ->
-                                    headers.set(
-                                            "Cache-Control",
-                                            value
-                                    )
-                    );
-
-            return ResponseEntity
-                    .status(
-                            HttpStatusCode.valueOf(
-                                    response.statusCode()
-                            )
-                    )
-                    .headers(headers)
-                    .body(response.body());
-
-        } catch (Exception e) {
-
-            e.printStackTrace();
-
-            return ResponseEntity
-                    .internalServerError()
-                    .build();
-        }
+        System.out.println(
+                "[Preview] Created package.json"
+        );
     }
 
 
@@ -321,10 +291,15 @@ public class PreviewService {
 
         Path filePath =
                 rootDirectory
-                        .resolve(file.getFilePath())
+                        .resolve(
+                                file.getFilePath()
+                        )
                         .normalize();
 
-        if (!filePath.startsWith(rootDirectory)) {
+        // Security check
+        if (!filePath.startsWith(
+                rootDirectory
+        )) {
 
             throw new SecurityException(
                     "Invalid project file path: "
@@ -336,7 +311,9 @@ public class PreviewService {
                 filePath.getParent();
 
         if (parent != null) {
-            Files.createDirectories(parent);
+            Files.createDirectories(
+                    parent
+            );
         }
 
         Files.writeString(
@@ -363,7 +340,9 @@ public class PreviewService {
     ) throws IOException {
 
         Path indexHtml =
-                rootDirectory.resolve("index.html");
+                rootDirectory.resolve(
+                        "index.html"
+                );
 
         if (Files.exists(indexHtml)) {
             return;
@@ -372,7 +351,9 @@ public class PreviewService {
         String indexContent = """
                 <!DOCTYPE html>
                 <html lang="en">
+
                 <head>
+
                     <meta charset="UTF-8">
 
                     <meta
@@ -381,6 +362,7 @@ public class PreviewService {
                     >
 
                     <title>Prompt2Web Preview</title>
+
                 </head>
 
                 <body>
@@ -393,6 +375,7 @@ public class PreviewService {
                     ></script>
 
                 </body>
+
                 </html>
                 """;
 
@@ -401,6 +384,10 @@ public class PreviewService {
                 indexContent,
                 StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE
+        );
+
+        System.out.println(
+                "[Preview] Created index.html"
         );
     }
 
@@ -415,7 +402,9 @@ public class PreviewService {
     ) throws IOException {
 
         Path viteConfig =
-                rootDirectory.resolve("vite.config.js");
+                rootDirectory.resolve(
+                        "vite.config.js"
+                );
 
         String config =
                 """
@@ -423,6 +412,7 @@ public class PreviewService {
                 import react from "@vitejs/plugin-react";
 
                 export default defineConfig({
+
                     base: "%s",
 
                     plugins: [
@@ -430,11 +420,15 @@ public class PreviewService {
                     ],
 
                     server: {
+                        host: "127.0.0.1",
                         hmr: false
                     }
+
                 });
                 """
-                        .formatted(basePath);
+                        .formatted(
+                                basePath
+                        );
 
         Files.writeString(
                 viteConfig,
@@ -451,7 +445,7 @@ public class PreviewService {
 
 
     // ============================================================
-    // RUN NPM INSTALL
+    // NPM INSTALL
     // ============================================================
 
     private void runNpmInstall(
@@ -498,7 +492,8 @@ public class PreviewService {
                         String line;
 
                         while (
-                                (line = reader.readLine())
+                                (line =
+                                        reader.readLine())
                                         != null
                         ) {
 
@@ -608,7 +603,8 @@ public class PreviewService {
                         String line;
 
                         while (
-                                (line = reader.readLine())
+                                (line =
+                                        reader.readLine())
                                         != null
                         ) {
 
@@ -653,6 +649,140 @@ public class PreviewService {
 
 
     // ============================================================
+    // PROXY PREVIEW
+    // ============================================================
+
+    public ResponseEntity<byte[]> proxyPreview(
+            String projectId,
+            String token,
+            String path,
+            HttpServletRequest request
+    ) {
+
+        String storedToken =
+                previewTokens.get(
+                        projectId
+                );
+
+        Integer port =
+                previewPorts.get(
+                        projectId
+                );
+
+        Process process =
+                runningProcesses.get(
+                        projectId
+                );
+
+        if (storedToken == null
+                || !storedToken.equals(token)
+                || port == null
+                || process == null
+                || !process.isAlive()) {
+
+            return ResponseEntity
+                    .notFound()
+                    .build();
+        }
+
+        try {
+
+            String targetPath = "/";
+
+            if (path != null
+                    && !path.isBlank()) {
+
+                targetPath =
+                        path.startsWith("/")
+                                ? path
+                                : "/" + path;
+            }
+
+            String query =
+                    request.getQueryString();
+
+            String targetUrl =
+                    "http://127.0.0.1:"
+                            + port
+                            + targetPath;
+
+            if (query != null
+                    && !query.isBlank()) {
+
+                targetUrl +=
+                        "?" + query;
+            }
+
+            HttpClient client =
+                    HttpClient.newHttpClient();
+
+            HttpRequest httpRequest =
+                    HttpRequest.newBuilder()
+                            .uri(
+                                    URI.create(
+                                            targetUrl
+                                    )
+                            )
+                            .GET()
+                            .build();
+
+            HttpResponse<byte[]> response =
+                    client.send(
+                            httpRequest,
+                            HttpResponse.BodyHandlers
+                                    .ofByteArray()
+                    );
+
+            HttpHeaders headers =
+                    new HttpHeaders();
+
+            response.headers()
+                    .firstValue(
+                            "Content-Type"
+                    )
+                    .ifPresent(
+                            value ->
+                                    headers.set(
+                                            "Content-Type",
+                                            value
+                                    )
+                    );
+
+            response.headers()
+                    .firstValue(
+                            "Cache-Control"
+                    )
+                    .ifPresent(
+                            value ->
+                                    headers.set(
+                                            "Cache-Control",
+                                            value
+                                    )
+                    );
+
+            return ResponseEntity
+                    .status(
+                            HttpStatusCode.valueOf(
+                                    response.statusCode()
+                            )
+                    )
+                    .headers(headers)
+                    .body(
+                            response.body()
+                    );
+
+        } catch (Exception e) {
+
+            e.printStackTrace();
+
+            return ResponseEntity
+                    .internalServerError()
+                    .build();
+        }
+    }
+
+
+    // ============================================================
     // STOP PREVIEW
     // ============================================================
 
@@ -661,9 +791,12 @@ public class PreviewService {
     ) {
 
         Process process =
-                runningProcesses.remove(projectId);
+                runningProcesses.remove(
+                        projectId
+                );
 
-        if (process != null && process.isAlive()) {
+        if (process != null
+                && process.isAlive()) {
 
             try {
 
@@ -708,8 +841,13 @@ public class PreviewService {
             }
         }
 
-        previewPorts.remove(projectId);
-        previewTokens.remove(projectId);
+        previewPorts.remove(
+                projectId
+        );
+
+        previewTokens.remove(
+                projectId
+        );
 
         Path directory =
                 previewDirectories.remove(
@@ -718,7 +856,9 @@ public class PreviewService {
 
         if (directory != null) {
 
-            deleteDirectory(directory);
+            deleteDirectory(
+                    directory
+            );
         }
     }
 
@@ -757,6 +897,7 @@ public class PreviewService {
                                             + path
                             );
                         }
+
                     });
 
         } catch (IOException e) {
@@ -776,14 +917,16 @@ public class PreviewService {
     private boolean isWindows() {
 
         return System
-                .getProperty("os.name")
+                .getProperty(
+                        "os.name"
+                )
                 .toLowerCase()
                 .contains("win");
     }
 
 
     // ============================================================
-    // CLEANUP
+    // APPLICATION SHUTDOWN
     // ============================================================
 
     @PreDestroy
