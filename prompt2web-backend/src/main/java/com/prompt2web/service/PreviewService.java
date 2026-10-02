@@ -1020,31 +1020,19 @@ public class PreviewService {
             Process viteProcess
     ) throws Exception {
 
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(
-                        java.time.Duration.ofSeconds(2)
-                )
-                .build();
-
-        String url =
-                "http://127.0.0.1:"
-                        + port
-                        + "/";
-
         long timeout =
-                System.currentTimeMillis()
-                        + 30_000;
+                System.currentTimeMillis() + 30_000;
 
         System.out.println(
                 "[Preview] Waiting for Vite to become ready..."
         );
 
-        while (
-                System.currentTimeMillis()
-                        < timeout
-        ) {
+        while (System.currentTimeMillis() < timeout) {
 
-            // If Vite crashed while starting
+            // --------------------------------------------------------
+            // 1. Check if Vite process has crashed
+            // --------------------------------------------------------
+
             if (!viteProcess.isAlive()) {
 
                 throw new RuntimeException(
@@ -1052,46 +1040,49 @@ public class PreviewService {
                 );
             }
 
-            try {
 
-                HttpRequest request =
-                        HttpRequest.newBuilder()
-                                .uri(
-                                        URI.create(url)
-                                )
-                                .timeout(
-                                        java.time.Duration
-                                                .ofSeconds(2)
-                                )
-                                .GET()
-                                .build();
+            // --------------------------------------------------------
+            // 2. Check whether Vite is accepting TCP connections
+            // --------------------------------------------------------
 
-                HttpResponse<Void> response =
-                        client.send(
-                                request,
-                                HttpResponse.BodyHandlers
-                                        .discarding()
-                        );
+            try (
+                    java.net.Socket socket =
+                            new java.net.Socket()
+            ) {
 
-                if (response.statusCode() >= 200
-                        && response.statusCode() < 500) {
+                socket.connect(
+                        new java.net.InetSocketAddress(
+                                "127.0.0.1",
+                                port
+                        ),
+                        1000
+                );
 
-                    System.out.println(
-                            "[Preview] Vite is ready on port "
-                                    + port
-                    );
+                System.out.println(
+                        "[Preview] Vite is ready on port "
+                                + port
+                );
 
-                    return;
-                }
+                return;
 
-            } catch (Exception ignored) {
+            } catch (IOException ignored) {
 
-                // Vite is not ready yet.
-                // Keep checking.
+                // Vite is still starting.
+                // Continue checking.
             }
+
+
+            // --------------------------------------------------------
+            // 3. Wait before checking again
+            // --------------------------------------------------------
 
             Thread.sleep(500);
         }
+
+
+        // ------------------------------------------------------------
+        // 4. Vite did not become available
+        // ------------------------------------------------------------
 
         throw new RuntimeException(
                 "Vite server did not become ready within 30 seconds."
