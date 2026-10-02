@@ -247,15 +247,18 @@ public class PreviewService {
 
 
             // ----------------------------------------------------
-            // 14. Give Vite time to start
-            // ----------------------------------------------------
+// 14. Wait until Vite is actually ready
+// ----------------------------------------------------
 
-            Thread.sleep(3000);
+            waitForViteReady(
+                    port,
+                    viteProcess
+            );
 
 
-            // ----------------------------------------------------
-            // 15. Verify Vite is still running
-            // ----------------------------------------------------
+// ----------------------------------------------------
+// 15. Verify Vite is still running
+// ----------------------------------------------------
 
             if (!viteProcess.isAlive()) {
 
@@ -1008,6 +1011,92 @@ public class PreviewService {
         }
     }
 
+    // ============================================================
+// WAIT FOR VITE TO BECOME READY
+// ============================================================
+
+    private void waitForViteReady(
+            int port,
+            Process viteProcess
+    ) throws Exception {
+
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(
+                        java.time.Duration.ofSeconds(2)
+                )
+                .build();
+
+        String url =
+                "http://127.0.0.1:"
+                        + port
+                        + "/";
+
+        long timeout =
+                System.currentTimeMillis()
+                        + 30_000;
+
+        System.out.println(
+                "[Preview] Waiting for Vite to become ready..."
+        );
+
+        while (
+                System.currentTimeMillis()
+                        < timeout
+        ) {
+
+            // If Vite crashed while starting
+            if (!viteProcess.isAlive()) {
+
+                throw new RuntimeException(
+                        "Vite process stopped while starting."
+                );
+            }
+
+            try {
+
+                HttpRequest request =
+                        HttpRequest.newBuilder()
+                                .uri(
+                                        URI.create(url)
+                                )
+                                .timeout(
+                                        java.time.Duration
+                                                .ofSeconds(2)
+                                )
+                                .GET()
+                                .build();
+
+                HttpResponse<Void> response =
+                        client.send(
+                                request,
+                                HttpResponse.BodyHandlers
+                                        .discarding()
+                        );
+
+                if (response.statusCode() >= 200
+                        && response.statusCode() < 500) {
+
+                    System.out.println(
+                            "[Preview] Vite is ready on port "
+                                    + port
+                    );
+
+                    return;
+                }
+
+            } catch (Exception ignored) {
+
+                // Vite is not ready yet.
+                // Keep checking.
+            }
+
+            Thread.sleep(500);
+        }
+
+        throw new RuntimeException(
+                "Vite server did not become ready within 30 seconds."
+        );
+    }
 
     // ============================================================
     // PROXY PREVIEW
