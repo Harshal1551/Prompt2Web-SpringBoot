@@ -26,6 +26,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -39,15 +41,36 @@ public class PreviewService {
     private final ProjectRepository projectRepository;
     private final ProjectFileRepository projectFileRepository;
 
+    /*
+     * Running Vite processes.
+     *
+     * projectId -> Vite process
+     */
     private final Map<String, Process> runningProcesses =
             new ConcurrentHashMap<>();
 
+    /*
+     * Persistent preview directories.
+     *
+     * IMPORTANT:
+     * We no longer use Files.createTempDirectory()
+     * for every Preview click.
+     *
+     * The directory is reused so node_modules can also
+     * be reused.
+     */
     private final Map<String, Path> previewDirectories =
             new ConcurrentHashMap<>();
 
+    /*
+     * Currently running Vite port.
+     */
     private final Map<String, Integer> previewPorts =
             new ConcurrentHashMap<>();
 
+    /*
+     * Public preview security token.
+     */
     private final Map<String, String> previewTokens =
             new ConcurrentHashMap<>();
 
@@ -62,6 +85,10 @@ public class PreviewService {
             String baseUrl
     ) {
 
+        // --------------------------------------------------------
+        // 1. Verify project ownership
+        // --------------------------------------------------------
+
         Project project = projectRepository
                 .findByIdAndUserId(projectId, userId)
                 .orElseThrow(() ->
@@ -69,6 +96,11 @@ public class PreviewService {
                                 "Project not found"
                         )
                 );
+
+
+        // --------------------------------------------------------
+        // 2. Get generated project files
+        // --------------------------------------------------------
 
         List<ProjectFile> files =
                 projectFileRepository.findByProjectId(projectId);
@@ -79,34 +111,37 @@ public class PreviewService {
             );
         }
 
+
         try {
 
-            // Stop previous preview
-            stopPreview(projectId);
+            // ----------------------------------------------------
+            // 3. Stop only the running Vite process
+            //
+            // IMPORTANT:
+            // We DO NOT delete the project directory.
+            // This allows node_modules to be reused.
+            // ----------------------------------------------------
 
-            // Create temporary project directory
+            stopRunningProcess(projectId);
+
+
+            // ----------------------------------------------------
+            // 4. Get or create persistent project directory
+            // ----------------------------------------------------
+
             Path rootDirectory =
-                    Files.createTempDirectory(
-                            "prompt2web-"
-                                    + project.getId()
-                                    + "-"
-                    );
+                    getOrCreatePreviewDirectory(projectId);
 
             previewDirectories.put(
                     projectId,
                     rootDirectory
             );
 
-            // Create preview token
-            String token =
-                    UUID.randomUUID().toString();
 
-            previewTokens.put(
-                    projectId,
-                    token
-            );
+            // ----------------------------------------------------
+            // 5. Write generated project files
+            // ----------------------------------------------------
 
-            // Write all generated project files
             for (ProjectFile file : files) {
 
                 writeProjectFile(
@@ -115,17 +150,42 @@ public class PreviewService {
                 );
             }
 
-            // Make sure package.json exists
+
+            // ----------------------------------------------------
+            // 6. Make sure package.json exists
+            // ----------------------------------------------------
+
             createPackageJsonIfMissing(
                     rootDirectory
             );
 
-            // Make sure index.html exists
+
+            // ----------------------------------------------------
+            // 7. Make sure index.html exists
+            // ----------------------------------------------------
+
             createIndexHtmlIfMissing(
                     rootDirectory
             );
 
-            // Public preview path
+
+            // ----------------------------------------------------
+            // 8. Create preview token
+            // ----------------------------------------------------
+
+            String token =
+                    UUID.randomUUID().toString();
+
+            previewTokens.put(
+                    projectId,
+                    token
+            );
+
+
+            // ----------------------------------------------------
+            // 9. Public preview path
+            // ----------------------------------------------------
+
             String previewBasePath =
                     "/api/projects/"
                             + projectId
@@ -133,13 +193,21 @@ public class PreviewService {
                             + token
                             + "/";
 
-            // Create Vite configuration
+
+            // ----------------------------------------------------
+            // 10. Create Vite configuration
+            // ----------------------------------------------------
+
             createViteConfig(
                     rootDirectory,
                     previewBasePath
             );
 
-            // Find available port
+
+            // ----------------------------------------------------
+            // 11. Find available port
+            // ----------------------------------------------------
+
             int port =
                     findAvailablePort();
 
@@ -148,21 +216,19 @@ public class PreviewService {
                     port
             );
 
-            // ====================================================
-            // NPM INSTALL
-            // ====================================================
 
-            System.out.println(
-                    "[Preview] Running npm install..."
-            );
+            // ----------------------------------------------------
+            // 12. Install dependencies ONLY when required
+            // ----------------------------------------------------
 
-            runNpmInstall(
+            installDependenciesIfRequired(
                     rootDirectory
             );
 
-            // ====================================================
-            // START VITE
-            // ====================================================
+
+            // ----------------------------------------------------
+            // 13. Start Vite
+            // ----------------------------------------------------
 
             System.out.println(
                     "[Preview] Starting Vite..."
@@ -179,8 +245,17 @@ public class PreviewService {
                     viteProcess
             );
 
-            // Give Vite time to start
+
+            // ----------------------------------------------------
+            // 14. Give Vite time to start
+            // ----------------------------------------------------
+
             Thread.sleep(3000);
+
+
+            // ----------------------------------------------------
+            // 15. Verify Vite is still running
+            // ----------------------------------------------------
 
             if (!viteProcess.isAlive()) {
 
@@ -193,19 +268,27 @@ public class PreviewService {
                 );
             }
 
+
+            // ----------------------------------------------------
+            // 16. Build public preview URL
+            // ----------------------------------------------------
+
             String previewUrl =
                     baseUrl
                             + previewBasePath;
+
 
             System.out.println(
                     "[Preview] Preview ready: "
                             + previewUrl
             );
 
+
             return new PreviewResponse(
                     "Preview started successfully",
                     previewUrl
             );
+
 
         } catch (Exception e) {
 
@@ -217,6 +300,78 @@ public class PreviewService {
                     e
             );
         }
+    }
+
+
+    // ============================================================
+    // GET OR CREATE PREVIEW DIRECTORY
+    // ============================================================
+
+    private Path getOrCreatePreviewDirectory(
+            String projectId
+    ) throws IOException {
+
+        Path existingDirectory =
+                previewDirectories.get(
+                        projectId
+                );
+
+        if (existingDirectory != null
+                && Files.exists(existingDirectory)) {
+
+            System.out.println(
+                    "[Preview] Reusing existing directory: "
+                            + existingDirectory
+            );
+
+            return existingDirectory;
+        }
+
+
+        /*
+         * Persistent directory inside the application's
+         * working directory.
+         *
+         * Example:
+         *
+         * /app/prompt2web-previews/<projectId>
+         *
+         * This survives Preview button clicks and allows
+         * node_modules to remain available.
+         */
+
+        Path baseDirectory =
+                Path.of(
+                        System.getProperty(
+                                "user.dir"
+                        ),
+                        "prompt2web-previews"
+                );
+
+
+        Files.createDirectories(
+                baseDirectory
+        );
+
+
+        Path projectDirectory =
+                baseDirectory.resolve(
+                        projectId
+                );
+
+
+        Files.createDirectories(
+                projectDirectory
+        );
+
+
+        System.out.println(
+                "[Preview] Created preview directory: "
+                        + projectDirectory
+        );
+
+
+        return projectDirectory;
     }
 
 
@@ -233,8 +388,12 @@ public class PreviewService {
                         "package.json"
                 );
 
-        // If AI generated package.json,
-        // don't overwrite it.
+
+        /*
+         * If AI generated package.json,
+         * don't overwrite it.
+         */
+
         if (Files.exists(packageJson)) {
 
             System.out.println(
@@ -243,6 +402,7 @@ public class PreviewService {
 
             return;
         }
+
 
         String packageContent = """
                 {
@@ -266,6 +426,7 @@ public class PreviewService {
                 }
                 """;
 
+
         Files.writeString(
                 packageJson,
                 packageContent,
@@ -273,6 +434,7 @@ public class PreviewService {
                 StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING
         );
+
 
         System.out.println(
                 "[Preview] Created package.json"
@@ -296,7 +458,9 @@ public class PreviewService {
                         )
                         .normalize();
 
+
         // Security check
+
         if (!filePath.startsWith(
                 rootDirectory
         )) {
@@ -307,14 +471,18 @@ public class PreviewService {
             );
         }
 
+
         Path parent =
                 filePath.getParent();
 
+
         if (parent != null) {
+
             Files.createDirectories(
                     parent
             );
         }
+
 
         Files.writeString(
                 filePath,
@@ -344,9 +512,11 @@ public class PreviewService {
                         "index.html"
                 );
 
+
         if (Files.exists(indexHtml)) {
             return;
         }
+
 
         String indexContent = """
                 <!DOCTYPE html>
@@ -379,12 +549,14 @@ public class PreviewService {
                 </html>
                 """;
 
+
         Files.writeString(
                 indexHtml,
                 indexContent,
                 StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE
         );
+
 
         System.out.println(
                 "[Preview] Created index.html"
@@ -405,6 +577,7 @@ public class PreviewService {
                 rootDirectory.resolve(
                         "vite.config.js"
                 );
+
 
         String config =
                 """
@@ -430,6 +603,7 @@ public class PreviewService {
                                 basePath
                         );
 
+
         Files.writeString(
                 viteConfig,
                 config,
@@ -438,8 +612,162 @@ public class PreviewService {
                 StandardOpenOption.TRUNCATE_EXISTING
         );
 
+
         System.out.println(
                 "[Preview] Created vite.config.js"
+        );
+    }
+
+
+    // ============================================================
+    // INSTALL DEPENDENCIES IF REQUIRED
+    // ============================================================
+
+    private void installDependenciesIfRequired(
+            Path workingDirectory
+    ) throws Exception {
+
+        Path packageJson =
+                workingDirectory.resolve(
+                        "package.json"
+                );
+
+        Path nodeModules =
+                workingDirectory.resolve(
+                        "node_modules"
+                );
+
+        Path installSignature =
+                workingDirectory.resolve(
+                        ".prompt2web-install-signature"
+                );
+
+
+        if (!Files.exists(packageJson)) {
+
+            throw new RuntimeException(
+                    "package.json not found"
+            );
+        }
+
+
+        String packageContent =
+                Files.readString(
+                        packageJson,
+                        StandardCharsets.UTF_8
+                );
+
+
+        String currentSignature =
+                createHash(
+                        packageContent
+                );
+
+
+        /*
+         * CASE 1:
+         *
+         * node_modules exists
+         * AND
+         * package.json has not changed.
+         *
+         * Therefore npm install is NOT required.
+         */
+
+        if (Files.exists(nodeModules)
+                && Files.exists(installSignature)) {
+
+            String savedSignature =
+                    Files.readString(
+                            installSignature,
+                            StandardCharsets.UTF_8
+                    );
+
+
+            if (savedSignature.equals(
+                    currentSignature
+            )) {
+
+                System.out.println(
+                        "[Preview] Dependencies already installed."
+                );
+
+                System.out.println(
+                        "[Preview] Skipping npm install."
+                );
+
+                return;
+            }
+        }
+
+
+        /*
+         * CASE 2:
+         *
+         * First Preview
+         *
+         * OR
+         *
+         * package.json changed.
+         *
+         * Therefore npm install is required.
+         */
+
+        System.out.println(
+                "[Preview] Installing dependencies..."
+        );
+
+
+        runNpmInstall(
+                workingDirectory
+        );
+
+
+        /*
+         * Save package.json signature.
+         *
+         * Next Preview can compare it and skip npm install.
+         */
+
+        Files.writeString(
+                installSignature,
+                currentSignature,
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING
+        );
+
+
+        System.out.println(
+                "[Preview] Dependency installation completed."
+        );
+    }
+
+
+    // ============================================================
+    // CREATE HASH
+    // ============================================================
+
+    private String createHash(
+            String content
+    ) throws Exception {
+
+        MessageDigest digest =
+                MessageDigest.getInstance(
+                        "SHA-256"
+                );
+
+
+        byte[] hash =
+                digest.digest(
+                        content.getBytes(
+                                StandardCharsets.UTF_8
+                        )
+                );
+
+
+        return HexFormat.of().formatHex(
+                hash
         );
     }
 
@@ -457,25 +785,34 @@ public class PreviewService {
                         ? "npm.cmd"
                         : "npm";
 
+
         ProcessBuilder processBuilder =
                 new ProcessBuilder(
                         npmCommand,
-                        "install"
+                        "install",
+                        "--no-audit",
+                        "--no-fund",
+                        "--prefer-offline"
                 );
+
 
         processBuilder.directory(
                 workingDirectory.toFile()
         );
 
+
         processBuilder.redirectErrorStream(
                 true
         );
 
+
         Process process =
                 processBuilder.start();
 
+
         StringBuilder output =
                 new StringBuilder();
+
 
         Thread outputThread =
                 new Thread(() -> {
@@ -491,6 +828,7 @@ public class PreviewService {
 
                         String line;
 
+
                         while (
                                 (line =
                                         reader.readLine())
@@ -503,11 +841,13 @@ public class PreviewService {
                                             System.lineSeparator()
                                     );
 
+
                             System.out.println(
                                     "[Preview npm] "
                                             + line
                             );
                         }
+
 
                     } catch (IOException e) {
 
@@ -519,23 +859,31 @@ public class PreviewService {
 
                 });
 
-        outputThread.setDaemon(true);
+
+        outputThread.setDaemon(
+                true
+        );
+
         outputThread.start();
+
 
         boolean finished =
                 process.waitFor(
-                        3,
+                        5,
                         TimeUnit.MINUTES
                 );
+
 
         if (!finished) {
 
             process.destroyForcibly();
 
+
             throw new RuntimeException(
                     "npm install timed out"
             );
         }
+
 
         if (process.exitValue() != 0) {
 
@@ -544,6 +892,7 @@ public class PreviewService {
                             + output
             );
         }
+
 
         System.out.println(
                 "[Preview] npm install completed"
@@ -565,6 +914,7 @@ public class PreviewService {
                         ? "npm.cmd"
                         : "npm";
 
+
         ProcessBuilder processBuilder =
                 new ProcessBuilder(
                         npmCommand,
@@ -577,16 +927,20 @@ public class PreviewService {
                         String.valueOf(port)
                 );
 
+
         processBuilder.directory(
                 workingDirectory.toFile()
         );
+
 
         processBuilder.redirectErrorStream(
                 true
         );
 
+
         Process process =
                 processBuilder.start();
+
 
         Thread outputThread =
                 new Thread(() -> {
@@ -602,6 +956,7 @@ public class PreviewService {
 
                         String line;
 
+
                         while (
                                 (line =
                                         reader.readLine())
@@ -614,6 +969,7 @@ public class PreviewService {
                             );
                         }
 
+
                     } catch (IOException e) {
 
                         System.err.println(
@@ -624,8 +980,13 @@ public class PreviewService {
 
                 });
 
-        outputThread.setDaemon(true);
+
+        outputThread.setDaemon(
+                true
+        );
+
         outputThread.start();
+
 
         return process;
     }
@@ -664,15 +1025,18 @@ public class PreviewService {
                         projectId
                 );
 
+
         Integer port =
                 previewPorts.get(
                         projectId
                 );
 
+
         Process process =
                 runningProcesses.get(
                         projectId
                 );
+
 
         if (storedToken == null
                 || !storedToken.equals(token)
@@ -685,9 +1049,11 @@ public class PreviewService {
                     .build();
         }
 
+
         try {
 
             String targetPath = "/";
+
 
             if (path != null
                     && !path.isBlank()) {
@@ -698,13 +1064,16 @@ public class PreviewService {
                                 : "/" + path;
             }
 
+
             String query =
                     request.getQueryString();
+
 
             String targetUrl =
                     "http://127.0.0.1:"
                             + port
                             + targetPath;
+
 
             if (query != null
                     && !query.isBlank()) {
@@ -713,8 +1082,10 @@ public class PreviewService {
                         "?" + query;
             }
 
+
             HttpClient client =
                     HttpClient.newHttpClient();
+
 
             HttpRequest httpRequest =
                     HttpRequest.newBuilder()
@@ -726,6 +1097,7 @@ public class PreviewService {
                             .GET()
                             .build();
 
+
             HttpResponse<byte[]> response =
                     client.send(
                             httpRequest,
@@ -733,8 +1105,10 @@ public class PreviewService {
                                     .ofByteArray()
                     );
 
+
             HttpHeaders headers =
                     new HttpHeaders();
+
 
             response.headers()
                     .firstValue(
@@ -748,6 +1122,7 @@ public class PreviewService {
                                     )
                     );
 
+
             response.headers()
                     .firstValue(
                             "Cache-Control"
@@ -760,6 +1135,7 @@ public class PreviewService {
                                     )
                     );
 
+
             return ResponseEntity
                     .status(
                             HttpStatusCode.valueOf(
@@ -771,9 +1147,11 @@ public class PreviewService {
                             response.body()
                     );
 
+
         } catch (Exception e) {
 
             e.printStackTrace();
+
 
             return ResponseEntity
                     .internalServerError()
@@ -790,122 +1168,100 @@ public class PreviewService {
             String projectId
     ) {
 
-        Process process =
-                runningProcesses.remove(
-                        projectId
-                );
+        stopRunningProcess(
+                projectId
+        );
 
-        if (process != null
-                && process.isAlive()) {
 
-            try {
+        /*
+         * IMPORTANT:
+         *
+         * We DO NOT remove:
+         *
+         * previewDirectories
+         *
+         * We DO NOT delete the directory.
+         *
+         * node_modules remains available for the next Preview.
+         */
 
-                if (isWindows()) {
-
-                    new ProcessBuilder(
-                            "taskkill",
-                            "/F",
-                            "/T",
-                            "/PID",
-                            String.valueOf(
-                                    process.pid()
-                            )
-                    )
-                            .start()
-                            .waitFor(
-                                    10,
-                                    TimeUnit.SECONDS
-                            );
-
-                } else {
-
-                    process.destroy();
-
-                    if (!process.waitFor(
-                            5,
-                            TimeUnit.SECONDS
-                    )) {
-
-                        process.destroyForcibly();
-                    }
-                }
-
-            } catch (Exception e) {
-
-                System.err.println(
-                        "[Preview] Failed to stop process: "
-                                + e.getMessage()
-                );
-
-                process.destroyForcibly();
-            }
-        }
 
         previewPorts.remove(
                 projectId
         );
 
+
         previewTokens.remove(
                 projectId
         );
-
-        Path directory =
-                previewDirectories.remove(
-                        projectId
-                );
-
-        if (directory != null) {
-
-            deleteDirectory(
-                    directory
-            );
-        }
     }
 
 
     // ============================================================
-    // DELETE DIRECTORY
+    // STOP ONLY VITE PROCESS
     // ============================================================
 
-    private void deleteDirectory(
-            Path directory
+    private void stopRunningProcess(
+            String projectId
     ) {
+
+        Process process =
+                runningProcesses.remove(
+                        projectId
+                );
+
+
+        if (process == null
+                || !process.isAlive()) {
+
+            return;
+        }
+
 
         try {
 
-            if (!Files.exists(directory)) {
-                return;
+            if (isWindows()) {
+
+                new ProcessBuilder(
+                        "taskkill",
+                        "/F",
+                        "/T",
+                        "/PID",
+                        String.valueOf(
+                                process.pid()
+                        )
+                )
+                        .start()
+                        .waitFor(
+                                10,
+                                TimeUnit.SECONDS
+                        );
+
+
+            } else {
+
+                process.destroy();
+
+
+                if (!process.waitFor(
+                        5,
+                        TimeUnit.SECONDS
+                )) {
+
+                    process.destroyForcibly();
+                }
             }
 
-            Files.walk(directory)
-                    .sorted(
-                            (a, b) ->
-                                    b.compareTo(a)
-                    )
-                    .forEach(path -> {
 
-                        try {
-
-                            Files.deleteIfExists(
-                                    path
-                            );
-
-                        } catch (IOException e) {
-
-                            System.err.println(
-                                    "[Preview] Failed to delete: "
-                                            + path
-                            );
-                        }
-
-                    });
-
-        } catch (IOException e) {
+        } catch (Exception e) {
 
             System.err.println(
-                    "[Preview] Failed to clean preview directory: "
+                    "[Preview] Failed to stop process: "
                             + e.getMessage()
             );
+
+
+            process.destroyForcibly();
         }
     }
 
@@ -935,7 +1291,7 @@ public class PreviewService {
         runningProcesses
                 .keySet()
                 .forEach(
-                        this::stopPreview
+                        this::stopRunningProcess
                 );
     }
 }
