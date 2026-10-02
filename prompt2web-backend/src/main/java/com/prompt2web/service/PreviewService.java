@@ -1109,6 +1109,10 @@ public class PreviewService {
         Process process =
                 runningProcesses.get(projectId);
 
+        // --------------------------------------------------------
+        // 1. Validate preview
+        // --------------------------------------------------------
+
         if (storedToken == null
                 || !storedToken.equals(token)
                 || port == null
@@ -1120,55 +1124,48 @@ public class PreviewService {
                     .build();
         }
 
+
         try {
 
-            // --------------------------------------------------------
-            // Vite base path
-            // --------------------------------------------------------
+            // ----------------------------------------------------
+            // 2. Convert public preview path to Vite path
+            //
+            // "/"              -> "/"
+            // "assets/app.js"  -> "/assets/app.js"
+            // "src/main.jsx"   -> "/src/main.jsx"
+            // ----------------------------------------------------
 
-            String previewBasePath =
-                    "/api/projects/"
-                            + projectId
-                            + "/preview/public/"
-                            + token
-                            + "/";
+            String targetPath = "/";
 
+            if (path != null
+                    && !path.isBlank()
+                    && !path.equals("/")) {
 
-            // --------------------------------------------------------
-            // Requested resource
-            // --------------------------------------------------------
-
-            String resourcePath = "";
-
-            if (path != null && !path.isBlank()) {
-
-                resourcePath =
+                targetPath =
                         path.startsWith("/")
-                                ? path.substring(1)
-                                : path;
+                                ? path
+                                : "/" + path;
             }
 
 
-            // --------------------------------------------------------
-            // Build target URL
+            // ----------------------------------------------------
+            // 3. Build LOCAL Vite URL
             //
-            // Example:
+            // IMPORTANT:
+            // Do NOT include /api/projects/.../preview/public/...
             //
-            // http://127.0.0.1:35221
-            // /api/projects/{projectId}/preview/public/{token}/
-            // assets/index.js
-            // --------------------------------------------------------
+            // Vite serves from its project root.
+            // ----------------------------------------------------
 
             String targetUrl =
                     "http://127.0.0.1:"
                             + port
-                            + previewBasePath
-                            + resourcePath;
+                            + targetPath;
 
 
-            // --------------------------------------------------------
-            // Preserve query parameters
-            // --------------------------------------------------------
+            // ----------------------------------------------------
+            // 4. Preserve query parameters
+            // ----------------------------------------------------
 
             String query =
                     request.getQueryString();
@@ -1191,9 +1188,9 @@ public class PreviewService {
             );
 
 
-            // --------------------------------------------------------
-            // Send request to Vite
-            // --------------------------------------------------------
+            // ----------------------------------------------------
+            // 5. Create HTTP client
+            // ----------------------------------------------------
 
             HttpClient client =
                     HttpClient.newBuilder()
@@ -1203,17 +1200,25 @@ public class PreviewService {
                             .build();
 
 
+            // ----------------------------------------------------
+            // 6. Create request
+            // ----------------------------------------------------
+
             HttpRequest httpRequest =
                     HttpRequest.newBuilder()
                             .uri(
                                     URI.create(targetUrl)
                             )
                             .timeout(
-                                    java.time.Duration.ofSeconds(10)
+                                    java.time.Duration.ofSeconds(30)
                             )
                             .GET()
                             .build();
 
+
+            // ----------------------------------------------------
+            // 7. Send request to Vite
+            // ----------------------------------------------------
 
             HttpResponse<byte[]> response =
                     client.send(
@@ -1222,9 +1227,17 @@ public class PreviewService {
                     );
 
 
-            // --------------------------------------------------------
-            // Copy important response headers
-            // --------------------------------------------------------
+            System.out.println(
+                    "[Preview Proxy] Vite response: "
+                            + response.statusCode()
+                            + " "
+                            + targetPath
+            );
+
+
+            // ----------------------------------------------------
+            // 8. Copy response headers
+            // ----------------------------------------------------
 
             HttpHeaders headers =
                     new HttpHeaders();
@@ -1252,20 +1265,9 @@ public class PreviewService {
                     );
 
 
-            response.headers()
-                    .firstValue("Content-Length")
-                    .ifPresent(
-                            value ->
-                                    headers.set(
-                                            "Content-Length",
-                                            value
-                                    )
-                    );
-
-
-            // --------------------------------------------------------
-            // Return Vite response
-            // --------------------------------------------------------
+            // ----------------------------------------------------
+            // 9. Return Vite response
+            // ----------------------------------------------------
 
             return ResponseEntity
                     .status(
@@ -1280,6 +1282,11 @@ public class PreviewService {
 
 
         } catch (Exception e) {
+
+            System.err.println(
+                    "[Preview Proxy] Error: "
+                            + e.getMessage()
+            );
 
             e.printStackTrace();
 
