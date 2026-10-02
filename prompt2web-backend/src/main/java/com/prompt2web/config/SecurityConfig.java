@@ -104,6 +104,12 @@ public class SecurityConfig {
                                 "/api/ai/website-test"
                         ).permitAll()
 
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/projects/*/preview/public/**"
+                        ).permitAll()
+
+
                         .anyRequest().authenticated()
                 )
 
