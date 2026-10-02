@@ -23,11 +23,17 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
+    // ------------------------------------------------------------
+    // Password Encoder
+    // ------------------------------------------------------------
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
+    // ------------------------------------------------------------
+    // CORS Configuration
+    // ------------------------------------------------------------
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
 
@@ -72,47 +78,84 @@ public class SecurityConfig {
         return source;
     }
 
+    // ------------------------------------------------------------
+    // Security Filter Chain
+    // ------------------------------------------------------------
     @Bean
     public SecurityFilterChain securityFilterChain(
-            HttpSecurity http) throws Exception {
+            HttpSecurity http
+    ) throws Exception {
 
         http
+
+                // ------------------------------------------------
+                // Disable CSRF
+                // ------------------------------------------------
                 .csrf(csrf -> csrf.disable())
 
-                .cors(cors -> cors.configurationSource(
-                        corsConfigurationSource()
-                ))
+                // ------------------------------------------------
+                // Enable CORS
+                // ------------------------------------------------
+                .cors(cors ->
+                        cors.configurationSource(
+                                corsConfigurationSource()
+                        )
+                )
 
+                // ------------------------------------------------
+                // Stateless JWT authentication
+                // ------------------------------------------------
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(
                                 SessionCreationPolicy.STATELESS
                         )
                 )
 
+                // ------------------------------------------------
+                // Allow iframe preview
+                // ------------------------------------------------
+                .headers(headers ->
+                        headers.frameOptions(frame ->
+                                frame.sameOrigin()
+                        )
+                )
+
+                // ------------------------------------------------
+                // Authorization Rules
+                // ------------------------------------------------
                 .authorizeHttpRequests(auth -> auth
 
-                        // Allow browser preflight requests
+                        // Browser preflight requests
                         .requestMatchers(
                                 HttpMethod.OPTIONS,
                                 "/**"
                         ).permitAll()
 
+                        // Public authentication endpoints
                         .requestMatchers(
                                 "/api/auth/register",
-                                "/api/auth/login",
+                                "/api/auth/login"
+                        ).permitAll()
+
+                        // Public AI test endpoints
+                        .requestMatchers(
                                 "/api/ai/test",
                                 "/api/ai/website-test"
                         ).permitAll()
 
+                        // Public project preview
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/projects/*/preview/public/**"
                         ).permitAll()
 
-
+                        // Everything else requires authentication
                         .anyRequest().authenticated()
                 )
 
+                // ------------------------------------------------
+                // JWT Authentication Filter
+                // ------------------------------------------------
                 .addFilterBefore(
                         jwtAuthenticationFilter,
                         UsernamePasswordAuthenticationFilter.class
