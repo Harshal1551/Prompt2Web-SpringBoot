@@ -1101,22 +1101,13 @@ public class PreviewService {
     ) {
 
         String storedToken =
-                previewTokens.get(
-                        projectId
-                );
-
+                previewTokens.get(projectId);
 
         Integer port =
-                previewPorts.get(
-                        projectId
-                );
-
+                previewPorts.get(projectId);
 
         Process process =
-                runningProcesses.get(
-                        projectId
-                );
-
+                runningProcesses.get(projectId);
 
         if (storedToken == null
                 || !storedToken.equals(token)
@@ -1129,31 +1120,58 @@ public class PreviewService {
                     .build();
         }
 
-
         try {
 
-            String targetPath = "/";
+            // --------------------------------------------------------
+            // Vite base path
+            // --------------------------------------------------------
+
+            String previewBasePath =
+                    "/api/projects/"
+                            + projectId
+                            + "/preview/public/"
+                            + token
+                            + "/";
 
 
-            if (path != null
-                    && !path.isBlank()) {
+            // --------------------------------------------------------
+            // Requested resource
+            // --------------------------------------------------------
 
-                targetPath =
+            String resourcePath = "";
+
+            if (path != null && !path.isBlank()) {
+
+                resourcePath =
                         path.startsWith("/")
-                                ? path
-                                : "/" + path;
+                                ? path.substring(1)
+                                : path;
             }
 
 
-            String query =
-                    request.getQueryString();
-
+            // --------------------------------------------------------
+            // Build target URL
+            //
+            // Example:
+            //
+            // http://127.0.0.1:35221
+            // /api/projects/{projectId}/preview/public/{token}/
+            // assets/index.js
+            // --------------------------------------------------------
 
             String targetUrl =
                     "http://127.0.0.1:"
                             + port
-                            + targetPath;
+                            + previewBasePath
+                            + resourcePath;
 
+
+            // --------------------------------------------------------
+            // Preserve query parameters
+            // --------------------------------------------------------
+
+            String query =
+                    request.getQueryString();
 
             if (query != null
                     && !query.isBlank()) {
@@ -1163,16 +1181,35 @@ public class PreviewService {
             }
 
 
+            System.out.println(
+                    "[Preview Proxy] "
+                            + request.getMethod()
+                            + " "
+                            + request.getRequestURI()
+                            + " -> "
+                            + targetUrl
+            );
+
+
+            // --------------------------------------------------------
+            // Send request to Vite
+            // --------------------------------------------------------
+
             HttpClient client =
-                    HttpClient.newHttpClient();
+                    HttpClient.newBuilder()
+                            .connectTimeout(
+                                    java.time.Duration.ofSeconds(5)
+                            )
+                            .build();
 
 
             HttpRequest httpRequest =
                     HttpRequest.newBuilder()
                             .uri(
-                                    URI.create(
-                                            targetUrl
-                                    )
+                                    URI.create(targetUrl)
+                            )
+                            .timeout(
+                                    java.time.Duration.ofSeconds(10)
                             )
                             .GET()
                             .build();
@@ -1181,19 +1218,20 @@ public class PreviewService {
             HttpResponse<byte[]> response =
                     client.send(
                             httpRequest,
-                            HttpResponse.BodyHandlers
-                                    .ofByteArray()
+                            HttpResponse.BodyHandlers.ofByteArray()
                     );
 
+
+            // --------------------------------------------------------
+            // Copy important response headers
+            // --------------------------------------------------------
 
             HttpHeaders headers =
                     new HttpHeaders();
 
 
             response.headers()
-                    .firstValue(
-                            "Content-Type"
-                    )
+                    .firstValue("Content-Type")
                     .ifPresent(
                             value ->
                                     headers.set(
@@ -1204,9 +1242,7 @@ public class PreviewService {
 
 
             response.headers()
-                    .firstValue(
-                            "Cache-Control"
-                    )
+                    .firstValue("Cache-Control")
                     .ifPresent(
                             value ->
                                     headers.set(
@@ -1215,6 +1251,21 @@ public class PreviewService {
                                     )
                     );
 
+
+            response.headers()
+                    .firstValue("Content-Length")
+                    .ifPresent(
+                            value ->
+                                    headers.set(
+                                            "Content-Length",
+                                            value
+                                    )
+                    );
+
+
+            // --------------------------------------------------------
+            // Return Vite response
+            // --------------------------------------------------------
 
             return ResponseEntity
                     .status(
@@ -1231,7 +1282,6 @@ public class PreviewService {
         } catch (Exception e) {
 
             e.printStackTrace();
-
 
             return ResponseEntity
                     .internalServerError()
