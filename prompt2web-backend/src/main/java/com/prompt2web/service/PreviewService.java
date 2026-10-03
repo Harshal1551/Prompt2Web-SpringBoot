@@ -1323,29 +1323,51 @@ public class PreviewService {
         try {
 
             // ----------------------------------------------------
-            // 2. Convert requested path
+            // 2. Build Vite BASE path
+            //
+            // Example:
+            //
+            // /api/projects/xxx/preview/public/token/
             // ----------------------------------------------------
 
-            String targetPath = "/";
+            String viteBasePath =
+                    "/api/projects/"
+                            + projectId
+                            + "/preview/public/"
+                            + token
+                            + "/";
+
+            // ----------------------------------------------------
+            // 3. Convert requested browser path
+            //
+            // Browser root:
+            // /
+            //
+            // Vite request:
+            // /api/projects/.../preview/public/token/
+            //
+            // Browser:
+            // /assets/index.css
+            //
+            // Vite request:
+            // /api/projects/.../preview/public/token/assets/index.css
+            // ----------------------------------------------------
+
+            String relativePath = "";
 
             if (path != null
                     && !path.isBlank()
                     && !path.equals("/")) {
 
-                targetPath =
+                relativePath =
                         path.startsWith("/")
-                                ? path
-                                : "/" + path;
+                                ? path.substring(1)
+                                : path;
             }
 
-            // ----------------------------------------------------
-            // 3. Build local Vite URL
-            // ----------------------------------------------------
-
-            String targetUrl =
-                    "http://127.0.0.1:"
-                            + port
-                            + targetPath;
+            String targetPath =
+                    viteBasePath
+                            + relativePath;
 
             // ----------------------------------------------------
             // 4. Preserve query parameters
@@ -1353,6 +1375,11 @@ public class PreviewService {
 
             String query =
                     request.getQueryString();
+
+            String targetUrl =
+                    "http://127.0.0.1:"
+                            + port
+                            + targetPath;
 
             if (query != null
                     && !query.isBlank()) {
@@ -1376,7 +1403,7 @@ public class PreviewService {
             HttpClient client =
                     HttpClient.newBuilder()
                             .connectTimeout(
-                                    Duration.ofSeconds(5)
+                                    Duration.ofSeconds(10)
                             )
                             .followRedirects(
                                     HttpClient.Redirect.NORMAL
@@ -1384,7 +1411,7 @@ public class PreviewService {
                             .build();
 
             // ----------------------------------------------------
-            // 6. Create request
+            // 6. Build request
             // ----------------------------------------------------
 
             HttpRequest.Builder requestBuilder =
@@ -1398,13 +1425,14 @@ public class PreviewService {
                             .GET();
 
             // ----------------------------------------------------
-            // 7. Forward only safe headers
+            // 7. Forward safe browser headers only
             // ----------------------------------------------------
 
             String accept =
                     request.getHeader("Accept");
 
             if (accept != null) {
+
                 requestBuilder.header(
                         "Accept",
                         accept
@@ -1415,19 +1443,12 @@ public class PreviewService {
                     request.getHeader("User-Agent");
 
             if (userAgent != null) {
+
                 requestBuilder.header(
                         "User-Agent",
                         userAgent
                 );
             }
-
-            // IMPORTANT:
-            // Do NOT forward:
-            // Host
-            // Connection
-            // Content-Length
-            // Transfer-Encoding
-            // Accept-Encoding
 
             HttpRequest httpRequest =
                     requestBuilder.build();
@@ -1451,7 +1472,7 @@ public class PreviewService {
             );
 
             // ----------------------------------------------------
-            // 9. Copy important response headers
+            // 9. Copy response headers
             // ----------------------------------------------------
 
             HttpHeaders headers =
