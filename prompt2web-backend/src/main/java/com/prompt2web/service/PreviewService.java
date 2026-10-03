@@ -598,16 +598,14 @@ public class PreviewService {
                     ],
     
                     server: {
-                        host: "0.0.0.0",
-                        strictPort: true,
-                        hmr: false,
-                        allowedHosts: [
-                            "localhost",
-                            "127.0.0.1"
-                        ]
-                    },
     
-                    appType: "spa"
+                        host: "127.0.0.1",
+    
+                        strictPort: true,
+    
+                        hmr: false
+    
+                    }
     
                 });
                 """
@@ -627,6 +625,11 @@ public class PreviewService {
 
         System.out.println(
                 "[Preview] Created vite.config.js"
+        );
+
+        System.out.println(
+                "[Preview] Vite base path: "
+                        + basePath
         );
     }
 
@@ -1125,6 +1128,7 @@ public class PreviewService {
                         ? "npm.cmd"
                         : "npm";
 
+
         ProcessBuilder processBuilder =
                 new ProcessBuilder(
                         npmCommand,
@@ -1132,19 +1136,26 @@ public class PreviewService {
                         "dev",
                         "--",
                         "--host",
-                        "0.0.0.0",
+                        "127.0.0.1",
                         "--port",
-                        String.valueOf(port)
+                        String.valueOf(port),
+                        "--strictPort"
                 );
+
 
         processBuilder.directory(
                 workingDirectory.toFile()
         );
 
-        processBuilder.redirectErrorStream(true);
+
+        processBuilder.redirectErrorStream(
+                true
+        );
+
 
         Process process =
                 processBuilder.start();
+
 
         Thread outputThread =
                 new Thread(() -> {
@@ -1153,7 +1164,8 @@ public class PreviewService {
                             BufferedReader reader =
                                     new BufferedReader(
                                             new InputStreamReader(
-                                                    process.getInputStream()
+                                                    process.getInputStream(),
+                                                    StandardCharsets.UTF_8
                                             )
                                     )
                     ) {
@@ -1161,7 +1173,8 @@ public class PreviewService {
                         String line;
 
                         while (
-                                (line = reader.readLine()) != null
+                                (line = reader.readLine())
+                                        != null
                         ) {
 
                             System.out.println(
@@ -1169,6 +1182,7 @@ public class PreviewService {
                                             + line
                             );
                         }
+
 
                     } catch (IOException e) {
 
@@ -1180,8 +1194,14 @@ public class PreviewService {
 
                 });
 
-        outputThread.setDaemon(true);
+
+        outputThread.setDaemon(
+                true
+        );
+
+
         outputThread.start();
+
 
         return process;
     }
@@ -1292,14 +1312,11 @@ public class PreviewService {
             HttpServletRequest request
     ) {
 
-        String storedToken =
-                previewTokens.get(projectId);
+        String storedToken = previewTokens.get(projectId);
 
-        Integer port =
-                previewPorts.get(projectId);
+        Integer port = previewPorts.get(projectId);
 
-        Process process =
-                runningProcesses.get(projectId);
+        Process process = runningProcesses.get(projectId);
 
         // --------------------------------------------------------
         // 1. Validate preview
@@ -1311,8 +1328,9 @@ public class PreviewService {
                 || process == null
                 || !process.isAlive()) {
 
-            System.out.println(
-                    "[Preview Proxy] Preview is not running."
+            System.err.println(
+                    "[Preview Proxy] Preview is not running for project: "
+                            + projectId
             );
 
             return ResponseEntity
@@ -1320,163 +1338,160 @@ public class PreviewService {
                     .build();
         }
 
+
         try {
 
             // ----------------------------------------------------
-            // 2. Build Vite BASE path
+            // 2. IMPORTANT
+            //
+            // DO NOT remove the public preview path.
+            //
+            // Vite was started with:
+            //
+            // base:
+            // /api/projects/{projectId}/preview/public/{token}/
+            //
+            // Therefore Vite must receive the SAME path.
+            // ----------------------------------------------------
+
+            String requestUri = request.getRequestURI();
+
+            if (requestUri == null || requestUri.isBlank()) {
+
+                requestUri = "/";
+            }
+
+
+            // ----------------------------------------------------
+            // 3. Preserve query string
+            // ----------------------------------------------------
+
+            String queryString =
+                    request.getQueryString();
+
+
+            // ----------------------------------------------------
+            // 4. Build Vite URL
             //
             // Example:
             //
-            // /api/projects/xxx/preview/public/token/
-            // ----------------------------------------------------
-
-            String viteBasePath =
-                    "/api/projects/"
-                            + projectId
-                            + "/preview/public/"
-                            + token
-                            + "/";
-
-            // ----------------------------------------------------
-            // 3. Convert requested browser path
-            //
-            // Browser root:
-            // /
-            //
-            // Vite request:
-            // /api/projects/.../preview/public/token/
-            //
             // Browser:
-            // /assets/index.css
             //
-            // Vite request:
-            // /api/projects/.../preview/public/token/assets/index.css
+            // /api/projects/xxx/preview/public/token/
+            //
+            // Backend forwards:
+            //
+            // http://127.0.0.1:36163/api/projects/xxx/preview/public/token/
+            //
+            // Vite then strips its base internally.
             // ----------------------------------------------------
-
-            String relativePath = "";
-
-            if (path != null
-                    && !path.isBlank()
-                    && !path.equals("/")) {
-
-                relativePath =
-                        path.startsWith("/")
-                                ? path.substring(1)
-                                : path;
-            }
-
-            String targetPath =
-                    viteBasePath
-                            + relativePath;
-
-            // ----------------------------------------------------
-            // 4. Preserve query parameters
-            // ----------------------------------------------------
-
-            String query =
-                    request.getQueryString();
 
             String targetUrl =
                     "http://127.0.0.1:"
                             + port
-                            + targetPath;
+                            + requestUri;
 
-            if (query != null
-                    && !query.isBlank()) {
 
-                targetUrl += "?" + query;
+            if (queryString != null
+                    && !queryString.isBlank()) {
+
+                targetUrl += "?" + queryString;
             }
+
 
             System.out.println(
                     "[Preview Proxy] "
                             + request.getMethod()
                             + " "
-                            + request.getRequestURI()
+                            + requestUri
                             + " -> "
                             + targetUrl
             );
 
+
             // ----------------------------------------------------
-            // 5. Create HTTP client
+            // 5. HTTP CLIENT
+            //
+            // IMPORTANT:
+            // Explicitly disable proxy usage.
+            //
+            // We are communicating with another process
+            // inside the SAME Render container.
             // ----------------------------------------------------
 
             HttpClient client =
                     HttpClient.newBuilder()
                             .connectTimeout(
-                                    Duration.ofSeconds(10)
+                                    java.time.Duration.ofSeconds(10)
                             )
                             .followRedirects(
                                     HttpClient.Redirect.NORMAL
                             )
+                            .version(
+                                    HttpClient.Version.HTTP_1_1
+                            )
+                            .proxy(
+                                    HttpClient.Builder.NO_PROXY
+                            )
                             .build();
 
+
             // ----------------------------------------------------
-            // 6. Build request
+            // 6. Request
+            //
+            // DO NOT manually set Host header.
+            // Java HttpClient controls it.
             // ----------------------------------------------------
 
-            HttpRequest.Builder requestBuilder =
+            HttpRequest httpRequest =
                     HttpRequest.newBuilder()
                             .uri(
                                     URI.create(targetUrl)
                             )
                             .timeout(
-                                    Duration.ofSeconds(60)
+                                    java.time.Duration.ofSeconds(60)
                             )
-                            .GET();
+                            .header(
+                                    "Accept",
+                                    request.getHeader("Accept") != null
+                                            ? request.getHeader("Accept")
+                                            : "*/*"
+                            )
+                            .GET()
+                            .build();
+
 
             // ----------------------------------------------------
-            // 7. Forward safe browser headers only
+            // 7. Send request to Vite
             // ----------------------------------------------------
 
-            String accept =
-                    request.getHeader("Accept");
+            System.out.println(
+                    "[Preview Proxy] Sending request to Vite..."
+            );
 
-            if (accept != null) {
-
-                requestBuilder.header(
-                        "Accept",
-                        accept
-                );
-            }
-
-            String userAgent =
-                    request.getHeader("User-Agent");
-
-            if (userAgent != null) {
-
-                requestBuilder.header(
-                        "User-Agent",
-                        userAgent
-                );
-            }
-
-            HttpRequest httpRequest =
-                    requestBuilder.build();
-
-            // ----------------------------------------------------
-            // 8. Send request to Vite
-            // ----------------------------------------------------
 
             HttpResponse<byte[]> response =
                     client.send(
                             httpRequest,
-                            HttpResponse.BodyHandlers
-                                    .ofByteArray()
+                            HttpResponse.BodyHandlers.ofByteArray()
                     );
+
 
             System.out.println(
                     "[Preview Proxy] Vite response: "
                             + response.statusCode()
                             + " "
-                            + targetPath
+                            + requestUri
             );
 
+
             // ----------------------------------------------------
-            // 9. Copy response headers
+            // 8. Copy important response headers
             // ----------------------------------------------------
 
             HttpHeaders headers =
                     new HttpHeaders();
+
 
             response.headers()
                     .firstValue("Content-Type")
@@ -1488,6 +1503,7 @@ public class PreviewService {
                                     )
                     );
 
+
             response.headers()
                     .firstValue("Cache-Control")
                     .ifPresent(
@@ -1497,6 +1513,18 @@ public class PreviewService {
                                             value
                                     )
                     );
+
+
+            response.headers()
+                    .firstValue("Content-Encoding")
+                    .ifPresent(
+                            value ->
+                                    headers.set(
+                                            "Content-Encoding",
+                                            value
+                                    )
+                    );
+
 
             response.headers()
                     .firstValue("ETag")
@@ -1508,20 +1536,46 @@ public class PreviewService {
                                     )
                     );
 
+
+            response.headers()
+                    .firstValue("Last-Modified")
+                    .ifPresent(
+                            value ->
+                                    headers.set(
+                                            "Last-Modified",
+                                            value
+                                    )
+                    );
+
+
+            // ----------------------------------------------------
+            // 9. Handle Location header if Vite redirects
+            // ----------------------------------------------------
+
+            response.headers()
+                    .firstValue("Location")
+                    .ifPresent(
+                            value ->
+                                    headers.set(
+                                            "Location",
+                                            value
+                                    )
+                    );
+
+
             // ----------------------------------------------------
             // 10. Return Vite response
             // ----------------------------------------------------
 
             return ResponseEntity
                     .status(
-                            HttpStatusCode.valueOf(
-                                    response.statusCode()
-                            )
+                            response.statusCode()
                     )
                     .headers(headers)
                     .body(
                             response.body()
                     );
+
 
         } catch (java.net.http.HttpTimeoutException e) {
 
@@ -1536,18 +1590,6 @@ public class PreviewService {
                     )
                     .build();
 
-        } catch (java.net.ConnectException e) {
-
-            System.err.println(
-                    "[Preview Proxy] Could not connect to Vite: "
-                            + e.getMessage()
-            );
-
-            return ResponseEntity
-                    .status(
-                            HttpStatus.BAD_GATEWAY
-                    )
-                    .build();
 
         } catch (Exception e) {
 
@@ -1559,7 +1601,9 @@ public class PreviewService {
             e.printStackTrace();
 
             return ResponseEntity
-                    .internalServerError()
+                    .status(
+                            HttpStatus.BAD_GATEWAY
+                    )
                     .build();
         }
     }
