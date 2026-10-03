@@ -28,6 +28,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -1124,7 +1125,6 @@ public class PreviewService {
                         ? "npm.cmd"
                         : "npm";
 
-
         ProcessBuilder processBuilder =
                 new ProcessBuilder(
                         npmCommand,
@@ -1134,29 +1134,17 @@ public class PreviewService {
                         "--host",
                         "0.0.0.0",
                         "--port",
-                        String.valueOf(port),
-                        "--strictPort"
+                        String.valueOf(port)
                 );
-
 
         processBuilder.directory(
                 workingDirectory.toFile()
         );
 
-
-        // Combine stdout + stderr
-        processBuilder.redirectErrorStream(
-                true
-        );
-
+        processBuilder.redirectErrorStream(true);
 
         Process process =
                 processBuilder.start();
-
-
-        // ------------------------------------------------------------
-        // Read Vite output continuously
-        // ------------------------------------------------------------
 
         Thread outputThread =
                 new Thread(() -> {
@@ -1173,8 +1161,7 @@ public class PreviewService {
                         String line;
 
                         while (
-                                (line = reader.readLine())
-                                        != null
+                                (line = reader.readLine()) != null
                         ) {
 
                             System.out.println(
@@ -1182,7 +1169,6 @@ public class PreviewService {
                                             + line
                             );
                         }
-
 
                     } catch (IOException e) {
 
@@ -1194,10 +1180,8 @@ public class PreviewService {
 
                 });
 
-
         outputThread.setDaemon(true);
         outputThread.start();
-
 
         return process;
     }
@@ -1317,7 +1301,6 @@ public class PreviewService {
         Process process =
                 runningProcesses.get(projectId);
 
-
         // --------------------------------------------------------
         // 1. Validate preview
         // --------------------------------------------------------
@@ -1328,16 +1311,19 @@ public class PreviewService {
                 || process == null
                 || !process.isAlive()) {
 
+            System.out.println(
+                    "[Preview Proxy] Preview is not running."
+            );
+
             return ResponseEntity
                     .notFound()
                     .build();
         }
 
-
         try {
 
             // ----------------------------------------------------
-            // 2. Convert public preview path to Vite path
+            // 2. Convert requested path
             // ----------------------------------------------------
 
             String targetPath = "/";
@@ -1352,16 +1338,14 @@ public class PreviewService {
                                 : "/" + path;
             }
 
-
             // ----------------------------------------------------
-            // 3. Build LOCAL Vite URL
+            // 3. Build local Vite URL
             // ----------------------------------------------------
 
             String targetUrl =
                     "http://127.0.0.1:"
                             + port
                             + targetPath;
-
 
             // ----------------------------------------------------
             // 4. Preserve query parameters
@@ -1373,10 +1357,8 @@ public class PreviewService {
             if (query != null
                     && !query.isBlank()) {
 
-                targetUrl +=
-                        "?" + query;
+                targetUrl += "?" + query;
             }
-
 
             System.out.println(
                     "[Preview Proxy] "
@@ -1387,7 +1369,6 @@ public class PreviewService {
                             + targetUrl
             );
 
-
             // ----------------------------------------------------
             // 5. Create HTTP client
             // ----------------------------------------------------
@@ -1395,41 +1376,72 @@ public class PreviewService {
             HttpClient client =
                     HttpClient.newBuilder()
                             .connectTimeout(
-                                    java.time.Duration.ofSeconds(5)
+                                    Duration.ofSeconds(5)
+                            )
+                            .followRedirects(
+                                    HttpClient.Redirect.NORMAL
                             )
                             .build();
 
-
             // ----------------------------------------------------
             // 6. Create request
-            //
-            // IMPORTANT:
-            // Do NOT forward Host header.
-            // Do NOT copy browser headers.
             // ----------------------------------------------------
 
-            HttpRequest httpRequest =
+            HttpRequest.Builder requestBuilder =
                     HttpRequest.newBuilder()
                             .uri(
                                     URI.create(targetUrl)
                             )
                             .timeout(
-                                    java.time.Duration.ofSeconds(30)
+                                    Duration.ofSeconds(60)
                             )
-                            .GET()
-                            .build();
-
+                            .GET();
 
             // ----------------------------------------------------
-            // 7. Send request to Vite
+            // 7. Forward only safe headers
+            // ----------------------------------------------------
+
+            String accept =
+                    request.getHeader("Accept");
+
+            if (accept != null) {
+                requestBuilder.header(
+                        "Accept",
+                        accept
+                );
+            }
+
+            String userAgent =
+                    request.getHeader("User-Agent");
+
+            if (userAgent != null) {
+                requestBuilder.header(
+                        "User-Agent",
+                        userAgent
+                );
+            }
+
+            // IMPORTANT:
+            // Do NOT forward:
+            // Host
+            // Connection
+            // Content-Length
+            // Transfer-Encoding
+            // Accept-Encoding
+
+            HttpRequest httpRequest =
+                    requestBuilder.build();
+
+            // ----------------------------------------------------
+            // 8. Send request to Vite
             // ----------------------------------------------------
 
             HttpResponse<byte[]> response =
                     client.send(
                             httpRequest,
-                            HttpResponse.BodyHandlers.ofByteArray()
+                            HttpResponse.BodyHandlers
+                                    .ofByteArray()
                     );
-
 
             System.out.println(
                     "[Preview Proxy] Vite response: "
@@ -1438,9 +1450,8 @@ public class PreviewService {
                             + targetPath
             );
 
-
             // ----------------------------------------------------
-            // 8. Copy useful response headers
+            // 9. Copy important response headers
             // ----------------------------------------------------
 
             HttpHeaders headers =
@@ -1467,18 +1478,17 @@ public class PreviewService {
                     );
 
             response.headers()
-                    .firstValue("Content-Encoding")
+                    .firstValue("ETag")
                     .ifPresent(
                             value ->
                                     headers.set(
-                                            "Content-Encoding",
+                                            "ETag",
                                             value
                                     )
                     );
 
-
             // ----------------------------------------------------
-            // 9. Return Vite response
+            // 10. Return Vite response
             // ----------------------------------------------------
 
             return ResponseEntity
@@ -1492,6 +1502,31 @@ public class PreviewService {
                             response.body()
                     );
 
+        } catch (java.net.http.HttpTimeoutException e) {
+
+            System.err.println(
+                    "[Preview Proxy] Vite request timed out: "
+                            + e.getMessage()
+            );
+
+            return ResponseEntity
+                    .status(
+                            HttpStatus.GATEWAY_TIMEOUT
+                    )
+                    .build();
+
+        } catch (java.net.ConnectException e) {
+
+            System.err.println(
+                    "[Preview Proxy] Could not connect to Vite: "
+                            + e.getMessage()
+            );
+
+            return ResponseEntity
+                    .status(
+                            HttpStatus.BAD_GATEWAY
+                    )
+                    .build();
 
         } catch (Exception e) {
 
