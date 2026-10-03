@@ -23,17 +23,21 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
+
     // ------------------------------------------------------------
-    // Password Encoder
+    // PASSWORD ENCODER
     // ------------------------------------------------------------
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
+
     // ------------------------------------------------------------
-    // CORS Configuration
+    // CORS
     // ------------------------------------------------------------
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
 
@@ -78,9 +82,11 @@ public class SecurityConfig {
         return source;
     }
 
+
     // ------------------------------------------------------------
-    // Security Filter Chain
+    // SECURITY FILTER CHAIN
     // ------------------------------------------------------------
+
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http
@@ -89,77 +95,103 @@ public class SecurityConfig {
         http
 
                 // ------------------------------------------------
-                // Disable CSRF
+                // CSRF
                 // ------------------------------------------------
+
                 .csrf(csrf -> csrf.disable())
 
+
                 // ------------------------------------------------
-                // Enable CORS
+                // CORS
                 // ------------------------------------------------
+
                 .cors(cors ->
                         cors.configurationSource(
                                 corsConfigurationSource()
                         )
                 )
 
+
                 // ------------------------------------------------
-                // Stateless JWT authentication
+                // STATELESS SESSION
                 // ------------------------------------------------
+
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(
                                 SessionCreationPolicy.STATELESS
                         )
                 )
 
-                // ------------------------------------------------
-                // Allow iframe preview
-                // ------------------------------------------------
-                .headers(headers ->
-                        headers.frameOptions(frame ->
-                                frame.sameOrigin()
-                        )
-                )
 
                 // ------------------------------------------------
-                // Authorization Rules
+                // AUTHORIZATION
                 // ------------------------------------------------
+
                 .authorizeHttpRequests(auth -> auth
 
-                        // Browser preflight requests
+                        // Browser preflight
                         .requestMatchers(
                                 HttpMethod.OPTIONS,
                                 "/**"
                         ).permitAll()
 
+
                         // Public authentication endpoints
                         .requestMatchers(
                                 "/api/auth/register",
-                                "/api/auth/login"
-                        ).permitAll()
-
-                        // Public AI test endpoints
-                        .requestMatchers(
+                                "/api/auth/login",
                                 "/api/ai/test",
                                 "/api/ai/website-test"
                         ).permitAll()
 
-                        // Public project preview
+
+                        // Public preview resources
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/projects/*/preview/public/**"
                         ).permitAll()
 
+
                         // Everything else requires authentication
-                        .anyRequest().authenticated()
+                        .anyRequest()
+                        .authenticated()
                 )
 
+
                 // ------------------------------------------------
-                // JWT Authentication Filter
+                // FRAME / IFRAME SECURITY
                 // ------------------------------------------------
+
+                .headers(headers -> headers
+
+                        // X-Frame-Options DENY/SAMEORIGIN
+                        // prevents Vercel frontend from framing
+                        // Render backend preview.
+                        .frameOptions(frame ->
+                                frame.disable()
+                        )
+
+                        // Allow only our frontend to embed
+                        // preview pages.
+                        .contentSecurityPolicy(csp ->
+                                csp.policyDirectives(
+                                        "frame-ancestors 'self' "
+                                                + "https://prompt2web-frontend.vercel.app"
+                                                + ";"
+                                )
+                        )
+                )
+
+
+                // ------------------------------------------------
+                // JWT FILTER
+                // ------------------------------------------------
+
                 .addFilterBefore(
                         jwtAuthenticationFilter,
                         UsernamePasswordAuthenticationFilter.class
                 );
+
 
         return http.build();
     }
