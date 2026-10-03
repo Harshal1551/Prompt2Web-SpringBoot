@@ -797,116 +797,315 @@ public class PreviewService {
                         : "npm";
 
 
-        ProcessBuilder processBuilder =
-                new ProcessBuilder(
-                        npmCommand,
-                        "install",
-                        "--no-audit",
-                        "--no-fund",
-                        "--prefer-offline"
-                );
+        // --------------------------------------------------------
+        // Retry npm install because Render/npm registry
+        // connections can occasionally reset.
+        // --------------------------------------------------------
+
+        int maxAttempts = 3;
+
+        Exception lastException = null;
 
 
-        processBuilder.directory(
-                workingDirectory.toFile()
-        );
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+
+            System.out.println(
+                    "[Preview] npm install attempt "
+                            + attempt
+                            + "/"
+                            + maxAttempts
+            );
 
 
-        processBuilder.redirectErrorStream(
-                true
-        );
+            Process process = null;
 
+            try {
 
-        Process process =
-                processBuilder.start();
-
-
-        StringBuilder output =
-                new StringBuilder();
-
-
-        Thread outputThread =
-                new Thread(() -> {
-
-                    try (
-                            BufferedReader reader =
-                                    new BufferedReader(
-                                            new InputStreamReader(
-                                                    process.getInputStream()
-                                            )
-                                    )
-                    ) {
-
-                        String line;
-
-
-                        while (
-                                (line =
-                                        reader.readLine())
-                                        != null
-                        ) {
-
-                            output
-                                    .append(line)
-                                    .append(
-                                            System.lineSeparator()
-                                    );
-
-
-                            System.out.println(
-                                    "[Preview npm] "
-                                            + line
-                            );
-                        }
-
-
-                    } catch (IOException e) {
-
-                        System.err.println(
-                                "[Preview npm] "
-                                        + e.getMessage()
+                ProcessBuilder processBuilder =
+                        new ProcessBuilder(
+                                npmCommand,
+                                "install",
+                                "--no-audit",
+                                "--no-fund",
+                                "--prefer-offline",
+                                "--fetch-retries",
+                                "5",
+                                "--fetch-retry-factor",
+                                "2",
+                                "--fetch-retry-mintimeout",
+                                "1000",
+                                "--fetch-retry-maxtimeout",
+                                "10000"
                         );
-                    }
-
-                });
 
 
-        outputThread.setDaemon(
-                true
-        );
-
-        outputThread.start();
-
-
-        boolean finished =
-                process.waitFor(
-                        5,
-                        TimeUnit.MINUTES
+                processBuilder.directory(
+                        workingDirectory.toFile()
                 );
 
 
-        if (!finished) {
+                processBuilder.redirectErrorStream(
+                        true
+                );
 
-            process.destroyForcibly();
+
+                process =
+                        processBuilder.start();
 
 
-            throw new RuntimeException(
-                    "npm install timed out"
-            );
+                StringBuilder output =
+                        new StringBuilder();
+
+
+                Process finalProcess = process;
+
+
+                Thread outputThread =
+                        new Thread(() -> {
+
+                            try (
+                                    BufferedReader reader =
+                                            new BufferedReader(
+                                                    new InputStreamReader(
+                                                            finalProcess.getInputStream()
+                                                    )
+                                            )
+                            ) {
+
+                                String line;
+
+
+                                while (
+                                        (line =
+                                                reader.readLine())
+                                                != null
+                                ) {
+
+                                    output
+                                            .append(line)
+                                            .append(
+                                                    System.lineSeparator()
+                                            );
+
+
+                                    System.out.println(
+                                            "[Preview npm] "
+                                                    + line
+                                    );
+                                }
+
+
+                            } catch (IOException e) {
+
+                                System.err.println(
+                                        "[Preview npm] "
+                                                + e.getMessage()
+                                );
+                            }
+
+                        });
+
+
+                outputThread.setDaemon(
+                        true
+                );
+
+
+                outputThread.start();
+
+
+                boolean finished =
+                        process.waitFor(
+                                5,
+                                TimeUnit.MINUTES
+                        );
+
+
+                if (!finished) {
+
+                    process.destroyForcibly();
+
+                    throw new RuntimeException(
+                            "npm install timed out"
+                    );
+                }
+
+
+                // ------------------------------------------------
+                // npm install succeeded
+                // ------------------------------------------------
+
+                if (process.exitValue() == 0) {
+
+                    System.out.println(
+                            "[Preview] npm install completed"
+                    );
+
+                    return;
+                }
+
+
+                // ------------------------------------------------
+                // npm install failed
+                // ------------------------------------------------
+
+                String errorOutput =
+                        output.toString();
+
+
+                lastException =
+                        new RuntimeException(
+                                "npm install failed:\n"
+                                        + errorOutput
+                        );
+
+
+                System.err.println(
+                        "[Preview] npm install attempt "
+                                + attempt
+                                + " failed."
+                );
+
+
+                // ------------------------------------------------
+                // Check whether this looks like a network error.
+                // ------------------------------------------------
+
+                String lowerOutput =
+                        errorOutput.toLowerCase();
+
+
+                boolean networkError =
+                        lowerOutput.contains(
+                                "econnreset"
+                        )
+                                || lowerOutput.contains(
+                                "network"
+                        )
+                                || lowerOutput.contains(
+                                "network aborted"
+                        )
+                                || lowerOutput.contains(
+                                "etimedout"
+                        )
+                                || lowerOutput.contains(
+                                "eai_again"
+                        )
+                                || lowerOutput.contains(
+                                "socket hang up"
+                        )
+                                || lowerOutput.contains(
+                                "fetch failed"
+                        );
+
+
+                // ------------------------------------------------
+                // Don't retry normal npm/package errors.
+                // ------------------------------------------------
+
+                if (!networkError) {
+
+                    throw lastException;
+                }
+
+
+                // ------------------------------------------------
+                // Retry only if attempts remain.
+                // ------------------------------------------------
+
+                if (attempt < maxAttempts) {
+
+                    long waitTime =
+                            attempt * 3000L;
+
+                    System.out.println(
+                            "[Preview] npm network error detected."
+                    );
+
+                    System.out.println(
+                            "[Preview] Retrying npm install in "
+                                    + (waitTime / 1000)
+                                    + " seconds..."
+                    );
+
+
+                    Thread.sleep(
+                            waitTime
+                    );
+                }
+
+
+            } catch (Exception e) {
+
+                lastException = e;
+
+
+                if (process != null
+                        && process.isAlive()) {
+
+                    process.destroyForcibly();
+                }
+
+
+                String message =
+                        e.getMessage() == null
+                                ? ""
+                                : e.getMessage()
+                                .toLowerCase();
+
+
+                boolean networkError =
+                        message.contains(
+                                "econnreset"
+                        )
+                                || message.contains(
+                                "network"
+                        )
+                                || message.contains(
+                                "timeout"
+                        );
+
+
+                if (!networkError
+                        || attempt >= maxAttempts) {
+
+                    throw e;
+                }
+
+
+                long waitTime =
+                        attempt * 3000L;
+
+
+                System.out.println(
+                        "[Preview] npm install failed because of "
+                                + "a temporary network problem."
+                );
+
+
+                System.out.println(
+                        "[Preview] Retrying in "
+                                + (waitTime / 1000)
+                                + " seconds..."
+                );
+
+
+                Thread.sleep(
+                        waitTime
+                );
+            }
         }
 
 
-        if (process.exitValue() != 0) {
+        // --------------------------------------------------------
+        // All attempts failed
+        // --------------------------------------------------------
 
-            throw new RuntimeException(
-                    "npm install failed:\n"
-                            + output
-            );
-        }
-
-
-        System.out.println(
-                "[Preview] npm install completed"
+        throw new RuntimeException(
+                "npm install failed after "
+                        + maxAttempts
+                        + " attempts.",
+                lastException
         );
     }
 
