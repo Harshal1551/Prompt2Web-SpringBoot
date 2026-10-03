@@ -578,41 +578,36 @@ public class PreviewService {
             String basePath
     ) throws IOException {
 
-        Path viteConfig =
-                rootDirectory.resolve(
-                        "vite.config.js"
-                );
+        Path viteConfig = rootDirectory.resolve("vite.config.js");
 
+        String config = """
+            import { defineConfig } from "vite";
+            import react from "@vitejs/plugin-react";
 
-        String config =
-                """
-                import { defineConfig } from "vite";
-                import react from "@vitejs/plugin-react";
-    
-                export default defineConfig({
-    
-                    base: "%s",
-    
-                    plugins: [
-                        react()
-                    ],
-    
-                    server: {
-    
-                        host: "127.0.0.1",
-    
-                        strictPort: true,
-    
-                        hmr: false
-    
+            export default defineConfig({
+                base: "%s",
+
+                plugins: [
+                    react()
+                ],
+
+                server: {
+                    host: "0.0.0.0",
+                    strictPort: true,
+
+                    hmr: false,
+
+                    watch: {
+                        usePolling: true,
+                        interval: 1000
                     }
-    
-                });
-                """
-                        .formatted(
-                                basePath
-                        );
+                },
 
+                preview: {
+                    host: "0.0.0.0"
+                }
+            });
+            """.formatted(basePath);
 
         Files.writeString(
                 viteConfig,
@@ -622,14 +617,8 @@ public class PreviewService {
                 StandardOpenOption.TRUNCATE_EXISTING
         );
 
-
         System.out.println(
                 "[Preview] Created vite.config.js"
-        );
-
-        System.out.println(
-                "[Preview] Vite base path: "
-                        + basePath
         );
     }
 
