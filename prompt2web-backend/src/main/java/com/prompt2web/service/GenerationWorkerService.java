@@ -16,6 +16,13 @@ public class GenerationWorkerService {
     private final GenerationRepository generationRepository;
     private final OpenRouterService openRouterService;
     private final GeneratedFileService generatedFileService;
+    private final PreviewService previewService;
+
+
+    // ============================================================
+    // PROCESS GENERATION
+    // ============================================================
+
     @Async
     public void processGeneration(
             String projectId,
@@ -23,36 +30,53 @@ public class GenerationWorkerService {
             String userId
     ) {
 
-        Generation generation = generationRepository
-                .findByIdAndProjectId(generationId, projectId)
-                .orElse(null);
+        Generation generation =
+                generationRepository
+                        .findByIdAndProjectId(
+                                generationId,
+                                projectId
+                        )
+                        .orElse(null);
+
 
         if (generation == null) {
+
+            System.err.println(
+                    "[Generation] Generation not found: "
+                            + generationId
+            );
+
             return;
         }
+
 
         try {
 
             System.out.println(
-                    "AI generation started: " + generationId
+                    "[Generation] AI generation started: "
+                            + generationId
             );
 
-            // ============================================
-            // AI GENERATION
-            // ============================================
+
+            // ====================================================
+            // 1. AI GENERATION
+            // ====================================================
 
             String aiResponse =
                     openRouterService.generateWebsite(
                             generation.getPrompt()
                     );
 
+
             System.out.println(
-                    "AI response received: " + generationId
+                    "[Generation] AI response received: "
+                            + generationId
             );
 
-            // ============================================
-            // SAVE GENERATED FILES
-            // ============================================
+
+            // ====================================================
+            // 2. SAVE GENERATED FILES
+            // ====================================================
 
             generatedFileService.saveGeneratedFiles(
                     projectId,
@@ -60,13 +84,16 @@ public class GenerationWorkerService {
                     aiResponse
             );
 
+
             System.out.println(
-                    "Generated files saved: " + generationId
+                    "[Generation] Generated files saved: "
+                            + generationId
             );
 
-            // ============================================
-            // COMPLETED
-            // ============================================
+
+            // ====================================================
+            // 3. GENERATION COMPLETED
+            // ====================================================
 
             generation.setStatus(
                     GenerationStatus.COMPLETED
@@ -76,19 +103,61 @@ public class GenerationWorkerService {
                     LocalDateTime.now()
             );
 
-            generationRepository.save(generation);
+            generationRepository.save(
+                    generation
+            );
+
 
             System.out.println(
-                    "Generation completed: " + generationId
+                    "[Generation] Generation completed: "
+                            + generationId
             );
+
+
+            // ====================================================
+            // 4. BUILD PREVIEW
+            // ====================================================
+
+            try {
+
+                System.out.println(
+                        "[Generation] Starting preview build..."
+                );
+
+                previewService.buildPreview(
+                        projectId,
+                        userId
+                );
+
+                System.out.println(
+                        "[Generation] Preview build completed."
+                );
+
+            } catch (Exception previewException) {
+
+                /*
+                 * Generation itself is already completed.
+                 * Preview failure should be logged separately.
+                 */
+
+                System.err.println(
+                        "[Generation] Preview build failed: "
+                                + previewException.getMessage()
+                );
+
+                previewException.printStackTrace();
+            }
+
 
         } catch (Exception e) {
 
             System.err.println(
-                    "Generation failed: " + generationId
+                    "[Generation] Generation failed: "
+                            + generationId
             );
 
             e.printStackTrace();
+
 
             generation.setStatus(
                     GenerationStatus.FAILED
@@ -98,7 +167,9 @@ public class GenerationWorkerService {
                     LocalDateTime.now()
             );
 
-            generationRepository.save(generation);
+            generationRepository.save(
+                    generation
+            );
         }
     }
 }

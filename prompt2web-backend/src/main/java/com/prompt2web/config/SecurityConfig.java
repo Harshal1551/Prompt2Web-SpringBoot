@@ -137,7 +137,7 @@ public class SecurityConfig {
                                         .contentSecurityPolicy(
                                                 csp ->
                                                         csp.policyDirectives(
-                                                                "frame-ancestors 'self' https://prompt2web-frontend.vercel.app"
+                                                                "frame-ancestors 'self' http://localhost:5173 https://prompt2web-frontend.vercel.app"
                                                         )
                                         )
                 )

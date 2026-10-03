@@ -21,9 +21,8 @@ public class GenerationService {
 
     private final GenerationRepository generationRepository;
     private final ProjectRepository projectRepository;
-    private final OpenRouterService openRouterService;
-    private final GeneratedFileService generatedFileService;
     private final GenerationWorkerService generationWorkerService;
+
 
     // ============================================================
     // CREATE GENERATION
@@ -35,28 +34,36 @@ public class GenerationService {
             GenerationRequest request
     ) {
 
-        // 1. Check that project belongs to logged-in user
-        Project project = projectRepository
-                .findByIdAndUserId(projectId, userId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Project not found"));
+        Project project =
+                projectRepository
+                        .findByIdAndUserId(
+                                projectId,
+                                userId
+                        )
+                        .orElseThrow(
+                                () -> new ResourceNotFoundException(
+                                        "Project not found"
+                                )
+                        );
 
 
-        // 2. Create generation
-        Generation generation = Generation.builder()
-                .prompt(request.getPrompt())
-                .status(GenerationStatus.PENDING)
-                .project(project)
-                .build();
+        Generation generation =
+                Generation.builder()
+                        .prompt(request.getPrompt())
+                        .status(GenerationStatus.PENDING)
+                        .project(project)
+                        .build();
 
 
-        // 3. Save generation
         Generation savedGeneration =
-                generationRepository.save(generation);
+                generationRepository.save(
+                        generation
+                );
 
 
-        // 4. Return response
-        return toGenerationResponse(savedGeneration);
+        return toGenerationResponse(
+                savedGeneration
+        );
     }
 
 
@@ -70,27 +77,39 @@ public class GenerationService {
             String userId
     ) {
 
-        // 1. Check project ownership
         projectRepository
-                .findByIdAndUserId(projectId, userId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Project not found"));
+                .findByIdAndUserId(
+                        projectId,
+                        userId
+                )
+                .orElseThrow(
+                        () -> new ResourceNotFoundException(
+                                "Project not found"
+                        )
+                );
 
 
-        // 2. Find generation inside project
-        Generation generation = generationRepository
-                .findByIdAndProjectId(generationId, projectId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Generation not found"));
+        Generation generation =
+                generationRepository
+                        .findByIdAndProjectId(
+                                generationId,
+                                projectId
+                        )
+                        .orElseThrow(
+                                () -> new ResourceNotFoundException(
+                                        "Generation not found"
+                                )
+                        );
 
 
-        // 3. Return response
-        return toGenerationResponse(generation);
+        return toGenerationResponse(
+                generation
+        );
     }
 
 
     // ============================================================
-    // GET ALL GENERATIONS OF PROJECT
+    // GET PROJECT GENERATIONS
     // ============================================================
 
     public List<GenerationResponse> getProjectGenerations(
@@ -98,20 +117,21 @@ public class GenerationService {
             String userId
     ) {
 
-        // 1. Check project ownership
         projectRepository
-                .findByIdAndUserId(projectId, userId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Project not found"));
+                .findByIdAndUserId(
+                        projectId,
+                        userId
+                )
+                .orElseThrow(
+                        () -> new ResourceNotFoundException(
+                                "Project not found"
+                        )
+                );
 
 
-        // 2. Get all generations
-        List<Generation> generations =
-                generationRepository.findByProjectId(projectId);
-
-
-        // 3. Convert entities to responses
-        return generations.stream()
+        return generationRepository
+                .findByProjectId(projectId)
+                .stream()
                 .map(this::toGenerationResponse)
                 .toList();
     }
@@ -128,31 +148,55 @@ public class GenerationService {
             GenerationStatusRequest request
     ) {
 
-        // 1. Check project ownership
         projectRepository
-                .findByIdAndUserId(projectId, userId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Project not found"));
+                .findByIdAndUserId(
+                        projectId,
+                        userId
+                )
+                .orElseThrow(
+                        () -> new ResourceNotFoundException(
+                                "Project not found"
+                        )
+                );
 
 
-        // 2. Find generation
-        Generation generation = generationRepository
-                .findByIdAndProjectId(generationId, projectId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Generation not found"));
+        Generation generation =
+                generationRepository
+                        .findByIdAndProjectId(
+                                generationId,
+                                projectId
+                        )
+                        .orElseThrow(
+                                () -> new ResourceNotFoundException(
+                                        "Generation not found"
+                                )
+                        );
 
 
-        // 3. Get requested status
-        GenerationStatus newStatus = GenerationStatus.valueOf(
-                request.getStatus().toUpperCase()
+        GenerationStatus newStatus;
+
+        try {
+
+            newStatus =
+                    GenerationStatus.valueOf(
+                            request.getStatus()
+                                    .toUpperCase()
+                    );
+
+        } catch (Exception e) {
+
+            throw new IllegalArgumentException(
+                    "Invalid generation status: "
+                            + request.getStatus()
+            );
+        }
+
+
+        generation.setStatus(
+                newStatus
         );
 
 
-        // 4. Update status
-        generation.setStatus(newStatus);
-
-
-        // 5. Set completedAt only when generation finishes
         if (newStatus == GenerationStatus.COMPLETED
                 || newStatus == GenerationStatus.FAILED) {
 
@@ -162,71 +206,16 @@ public class GenerationService {
 
         } else {
 
-            // PENDING / IN_PROGRESS
             generation.setCompletedAt(null);
         }
 
 
-        // 6. Save updated generation
         Generation updatedGeneration =
-                generationRepository.save(generation);
-
-
-        // 7. Return response
-        return toGenerationResponse(updatedGeneration);
-    }
-
-    // ============================================================
-// START GENERATION
-// ============================================================
-
-    public GenerationResponse startGeneration(
-            String projectId,
-            String generationId,
-            String userId
-    ) {
-
-        // 1. Verify project belongs to logged-in user
-        projectRepository
-                .findByIdAndUserId(projectId, userId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Project not found"
-                        )
+                generationRepository.save(
+                        generation
                 );
 
-        // 2. Find generation
-        Generation generation = generationRepository
-                .findByIdAndProjectId(generationId, projectId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Generation not found"
-                        )
-                );
 
-        // 3. Generation must be PENDING
-        if (generation.getStatus() != GenerationStatus.PENDING) {
-            throw new IllegalStateException(
-                    "Generation can only be started when status is PENDING"
-            );
-        }
-
-        // 4. Immediately change status to IN_PROGRESS
-        generation.setStatus(
-                GenerationStatus.IN_PROGRESS
-        );
-
-        Generation updatedGeneration =
-                generationRepository.save(generation);
-
-        // 5. Start AI generation in background
-        generationWorkerService.processGeneration(
-                projectId,
-                generationId,
-                userId
-        );
-
-        // 6. Immediately return IN_PROGRESS
         return toGenerationResponse(
                 updatedGeneration
         );
@@ -234,7 +223,85 @@ public class GenerationService {
 
 
     // ============================================================
-    // ENTITY -> RESPONSE CONVERTER
+    // START GENERATION
+    // ============================================================
+
+    public GenerationResponse startGeneration(
+            String projectId,
+            String generationId,
+            String userId
+    ) {
+
+        projectRepository
+                .findByIdAndUserId(
+                        projectId,
+                        userId
+                )
+                .orElseThrow(
+                        () -> new ResourceNotFoundException(
+                                "Project not found"
+                        )
+                );
+
+
+        Generation generation =
+                generationRepository
+                        .findByIdAndProjectId(
+                                generationId,
+                                projectId
+                        )
+                        .orElseThrow(
+                                () -> new ResourceNotFoundException(
+                                        "Generation not found"
+                                )
+                        );
+
+
+        if (generation.getStatus()
+                != GenerationStatus.PENDING) {
+
+            throw new IllegalStateException(
+                    "Generation can only be started when status is PENDING"
+            );
+        }
+
+
+        // --------------------------------------------------------
+        // Immediately mark as IN_PROGRESS
+        // --------------------------------------------------------
+
+        generation.setStatus(
+                GenerationStatus.IN_PROGRESS
+        );
+
+        generation.setCompletedAt(null);
+
+
+        Generation updatedGeneration =
+                generationRepository.save(
+                        generation
+                );
+
+
+        // --------------------------------------------------------
+        // Start background worker
+        // --------------------------------------------------------
+
+        generationWorkerService.processGeneration(
+                projectId,
+                generationId,
+                userId
+        );
+
+
+        return toGenerationResponse(
+                updatedGeneration
+        );
+    }
+
+
+    // ============================================================
+    // ENTITY -> RESPONSE
     // ============================================================
 
     private GenerationResponse toGenerationResponse(
@@ -244,10 +311,7 @@ public class GenerationService {
         return new GenerationResponse(
                 generation.getId(),
                 generation.getPrompt(),
-
-                // GenerationStatus enum -> String
                 generation.getStatus().name(),
-
                 generation.getProject().getId(),
                 generation.getCreatedAt(),
                 generation.getCompletedAt()

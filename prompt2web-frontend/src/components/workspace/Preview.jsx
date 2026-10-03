@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import previewService from "../../services/previewService";
+import api from "../../services/api";
 
 
 const Preview = ({ projectId }) => {
@@ -31,7 +32,12 @@ const Preview = ({ projectId }) => {
                     return;
                 }
 
-                setPreviewUrl(response.url);
+                const fullPreviewUrl = new URL(
+                    response.url,
+                    api.defaults.baseURL
+                ).toString();
+
+                setPreviewUrl(fullPreviewUrl);
 
             } catch (error) {
 

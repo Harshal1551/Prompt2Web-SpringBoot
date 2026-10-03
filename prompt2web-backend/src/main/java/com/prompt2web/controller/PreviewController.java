@@ -4,6 +4,7 @@ import com.prompt2web.dto.PreviewResponse;
 import com.prompt2web.service.PreviewService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.Resource;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -16,6 +17,10 @@ public class PreviewController {
     private final PreviewService previewService;
 
 
+    // ============================================================
+    // START PREVIEW
+    // ============================================================
+
     @PostMapping
     public ResponseEntity<PreviewResponse> startPreview(
             @PathVariable String projectId,
@@ -23,39 +28,33 @@ public class PreviewController {
             HttpServletRequest request
     ) {
 
-        String userId =
-                authentication.getName();
-
-        String baseUrl =
-                request.getScheme()
-                        + "://"
-                        + request.getServerName();
-
-        int port =
-                request.getServerPort();
-
-        if (port != 80 && port != 443) {
-            baseUrl += ":" + port;
-        }
+        String userId = authentication.getName();
 
         PreviewResponse response =
                 previewService.startPreview(
                         projectId,
-                        userId,
-                        baseUrl
+                        userId
                 );
 
         return ResponseEntity.ok(response);
     }
 
 
+    // ============================================================
+    // STOP PREVIEW
+    // ============================================================
+
     @DeleteMapping
     public ResponseEntity<Void> stopPreview(
-            @PathVariable String projectId
+            @PathVariable String projectId,
+            Authentication authentication
     ) {
 
+        String userId = authentication.getName();
+
         previewService.stopPreview(
-                projectId
+                projectId,
+                userId
         );
 
         return ResponseEntity
@@ -64,51 +63,57 @@ public class PreviewController {
     }
 
 
+    // ============================================================
+    // PUBLIC PREVIEW ROOT
+    // ============================================================
+
     @GetMapping("/public/{token}")
-    public ResponseEntity<byte[]> previewRoot(
+    public ResponseEntity<Resource> previewRoot(
             @PathVariable String projectId,
-            @PathVariable String token,
-            HttpServletRequest request
+            @PathVariable String token
     ) {
 
-        return previewService.proxyPreview(
+        return previewService.servePreviewFile(
                 projectId,
                 token,
-                "/",
-                request
+                "/"
         );
     }
 
+
+    // ============================================================
+    // PUBLIC PREVIEW ROOT WITH SLASH
+    // ============================================================
 
     @GetMapping("/public/{token}/")
-    public ResponseEntity<byte[]> previewRootWithSlash(
+    public ResponseEntity<Resource> previewRootWithSlash(
             @PathVariable String projectId,
-            @PathVariable String token,
-            HttpServletRequest request
+            @PathVariable String token
     ) {
 
-        return previewService.proxyPreview(
+        return previewService.servePreviewFile(
                 projectId,
                 token,
-                "/",
-                request
+                "/"
         );
     }
 
 
+    // ============================================================
+    // PUBLIC PREVIEW RESOURCE
+    // ============================================================
+
     @GetMapping("/public/{token}/{*path}")
-    public ResponseEntity<byte[]> previewResource(
+    public ResponseEntity<Resource> previewResource(
             @PathVariable String projectId,
             @PathVariable String token,
-            @PathVariable String path,
-            HttpServletRequest request
+            @PathVariable String path
     ) {
 
-        return previewService.proxyPreview(
+        return previewService.servePreviewFile(
                 projectId,
                 token,
-                path,
-                request
+                path
         );
     }
 }
