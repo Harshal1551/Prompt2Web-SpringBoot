@@ -850,6 +850,44 @@ public class PreviewService {
                     );
 
             System.out.println(
+                    "[Preview DEBUG] projectId = " + projectId
+            );
+
+            System.out.println(
+                    "[Preview DEBUG] token = " + token
+            );
+
+            System.out.println(
+                    "[Preview DEBUG] requestedPath = " + requestedPath
+            );
+
+            System.out.println(
+                    "[Preview DEBUG] cleanPath = " + cleanPath
+            );
+
+            System.out.println(
+                    "[Preview DEBUG] requestedFile = "
+                            + requestedFile.toAbsolutePath()
+            );
+
+            System.out.println(
+                    "[Preview DEBUG] exists = "
+                            + Files.exists(requestedFile)
+            );
+
+            System.out.println(
+                    "[Preview DEBUG] MIME = "
+                            + mediaType
+            );
+
+            System.out.println(
+                    "[Preview] Serving: "
+                            + requestedFile.getFileName()
+                            + " | MIME: "
+                            + mediaType
+            );
+
+            System.out.println(
                     "[Preview] Serving: "
                             + requestedFile.getFileName()
                             + " | MIME: "
