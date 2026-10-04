@@ -754,6 +754,17 @@ public class PreviewService {
             // Security check
             // ----------------------------------------------------
 
+            System.out.println("[Preview DEBUG] distDirectory = "
+                    + distDirectory.toAbsolutePath());
+
+            System.out.println("[Preview DEBUG] requestedFile = "
+                    + requestedFile.toAbsolutePath());
+
+            System.out.println("[Preview DEBUG] startsWith = "
+                    + requestedFile.startsWith(
+                    distDirectory.normalize()
+            ));
+
             if (!requestedFile.startsWith(
                     distDirectory.normalize()
             )) {
