@@ -67,6 +67,10 @@ public class GenerationWorkerService {
                             generation.getPrompt()
                     );
 
+            System.out.println(
+                    "[Generation] AI RAW RESPONSE:\n" + aiResponse
+            );
+
 
             System.out.println(
                     "[Generation] AI response received: "

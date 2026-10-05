@@ -1,7 +1,6 @@
 package com.prompt2web.service;
 
 import com.prompt2web.dto.PreviewResponse;
-import com.prompt2web.entity.Project;
 import com.prompt2web.entity.ProjectFile;
 import com.prompt2web.exception.ResourceNotFoundException;
 import com.prompt2web.repository.ProjectFileRepository;
@@ -39,31 +38,25 @@ public class PreviewService {
     private final ProjectRepository projectRepository;
 
     private final ProjectFileRepository projectFileRepository;
+    private final AiCodeRepairService aiCodeRepairService;
 
-    // ============================================================
     // PREVIEW DIRECTORIES
-    // ============================================================
 
     private final Map<String, Path> previewDirectories =
             new ConcurrentHashMap<>();
 
-    // ============================================================
     // PREVIEW TOKENS
-    // ============================================================
 
     private final Map<String, String> previewTokens =
             new ConcurrentHashMap<>();
 
-    // ============================================================
     // START PREVIEW
-    // ============================================================
 
     public PreviewResponse startPreview(
             String projectId,
             String userId
     ) {
 
-        // Verify project ownership
         projectRepository
                 .findByIdAndUserId(
                         projectId,
@@ -77,13 +70,11 @@ public class PreviewService {
 
         try {
 
-            // Build production preview
             buildPreview(
                     projectId,
                     userId
             );
 
-            // Generate public preview token
             String token =
                     UUID.randomUUID().toString();
 
@@ -92,7 +83,6 @@ public class PreviewService {
                     token
             );
 
-            // Build preview URL
             String previewUrl =
                     "/api/projects/"
                             + projectId
@@ -122,18 +112,12 @@ public class PreviewService {
         }
     }
 
-    // ============================================================
     // BUILD PREVIEW
-    // ============================================================
 
     public void buildPreview(
             String projectId,
             String userId
     ) throws Exception {
-
-        // --------------------------------------------------------
-        // Verify ownership
-        // --------------------------------------------------------
 
         projectRepository
                 .findByIdAndUserId(
@@ -146,10 +130,6 @@ public class PreviewService {
                         )
                 );
 
-        // --------------------------------------------------------
-        // Get project files from database
-        // --------------------------------------------------------
-
         List<ProjectFile> files =
                 projectFileRepository
                         .findByProjectId(projectId);
@@ -161,10 +141,6 @@ public class PreviewService {
             );
         }
 
-        // --------------------------------------------------------
-        // Get preview directory
-        // --------------------------------------------------------
-
         Path rootDirectory =
                 getOrCreatePreviewDirectory(
                         projectId
@@ -175,10 +151,6 @@ public class PreviewService {
                 rootDirectory
         );
 
-        // --------------------------------------------------------
-        // Write generated files
-        // --------------------------------------------------------
-
         for (ProjectFile file : files) {
 
             writeProjectFile(
@@ -186,10 +158,6 @@ public class PreviewService {
                     file
             );
         }
-
-        // --------------------------------------------------------
-        // Verify package.json
-        // --------------------------------------------------------
 
         Path packageJson =
                 rootDirectory.resolve(
@@ -203,25 +171,14 @@ public class PreviewService {
             );
         }
 
-        // --------------------------------------------------------
-        // Install dependencies
-        // --------------------------------------------------------
-
         installDependenciesIfRequired(
                 rootDirectory
         );
 
-        // --------------------------------------------------------
-        // Build React application
-        // --------------------------------------------------------
-
-        runNpmBuild(
-                rootDirectory
+        runNpmBuildWithAiRepair(
+                rootDirectory,
+                projectId
         );
-
-        // --------------------------------------------------------
-        // Verify dist
-        // --------------------------------------------------------
 
         Path distDirectory =
                 rootDirectory.resolve("dist");
@@ -249,9 +206,7 @@ public class PreviewService {
         );
     }
 
-    // ============================================================
     // GET OR CREATE PREVIEW DIRECTORY
-    // ============================================================
 
     private Path getOrCreatePreviewDirectory(
             String projectId
@@ -295,9 +250,7 @@ public class PreviewService {
         return projectDirectory;
     }
 
-    // ============================================================
     // WRITE PROJECT FILE
-    // ============================================================
 
     private void writeProjectFile(
             Path rootDirectory,
@@ -308,10 +261,6 @@ public class PreviewService {
                 file.getFilePath()
                         .replace("\\", "/");
 
-        // --------------------------------------------------------
-        // Prevent absolute paths
-        // --------------------------------------------------------
-
         if (relativePath.startsWith("/")
                 || relativePath.contains(":")) {
 
@@ -321,18 +270,10 @@ public class PreviewService {
             );
         }
 
-        // --------------------------------------------------------
-        // Resolve file path
-        // --------------------------------------------------------
-
         Path filePath =
                 rootDirectory
                         .resolve(relativePath)
                         .normalize();
-
-        // --------------------------------------------------------
-        // Security check
-        // --------------------------------------------------------
 
         if (!filePath.startsWith(
                 rootDirectory.normalize()
@@ -344,10 +285,6 @@ public class PreviewService {
             );
         }
 
-        // --------------------------------------------------------
-        // Create parent directories
-        // --------------------------------------------------------
-
         Path parent =
                 filePath.getParent();
 
@@ -357,10 +294,6 @@ public class PreviewService {
                     parent
             );
         }
-
-        // --------------------------------------------------------
-        // Write file
-        // --------------------------------------------------------
 
         Files.writeString(
                 filePath,
@@ -373,9 +306,7 @@ public class PreviewService {
         );
     }
 
-    // ============================================================
     // INSTALL DEPENDENCIES IF REQUIRED
-    // ============================================================
 
     private void installDependenciesIfRequired(
             Path workingDirectory
@@ -414,10 +345,6 @@ public class PreviewService {
                         packageContent
                 );
 
-        // --------------------------------------------------------
-        // Reuse existing node_modules
-        // --------------------------------------------------------
-
         if (Files.exists(nodeModules)
                 && Files.exists(installSignature)) {
 
@@ -438,10 +365,6 @@ public class PreviewService {
                 return;
             }
         }
-
-        // --------------------------------------------------------
-        // Install dependencies
-        // --------------------------------------------------------
 
         System.out.println(
                 "[Preview] Installing dependencies..."
@@ -464,9 +387,7 @@ public class PreviewService {
         );
     }
 
-    // ============================================================
     // CREATE HASH
-    // ============================================================
 
     private String createHash(
             String content
@@ -489,9 +410,7 @@ public class PreviewService {
                 .formatHex(hash);
     }
 
-    // ============================================================
     // NPM INSTALL
-    // ============================================================
 
     private void runNpmInstall(
             Path workingDirectory
@@ -569,10 +488,8 @@ public class PreviewService {
         }
     }
 
-    // ============================================================
-    // NPM BUILD
-    // ============================================================
 
+    // NPM BUILD
     private void runNpmBuild(
             Path workingDirectory
     ) throws Exception {
@@ -604,6 +521,9 @@ public class PreviewService {
         Process process =
                 processBuilder.start();
 
+        StringBuilder buildOutput =
+                new StringBuilder();
+
         try (
                 BufferedReader reader =
                         new BufferedReader(
@@ -625,6 +545,10 @@ public class PreviewService {
                         "[Preview build] "
                                 + line
                 );
+
+                buildOutput
+                        .append(line)
+                        .append(System.lineSeparator());
             }
         }
 
@@ -639,15 +563,15 @@ public class PreviewService {
             process.destroyForcibly();
 
             throw new RuntimeException(
-                    "npm run build timed out"
+                    "npm run build timed out\n"
+                            + buildOutput
             );
         }
 
         if (process.exitValue() != 0) {
 
             throw new RuntimeException(
-                    "npm run build failed with exit code "
-                            + process.exitValue()
+                    buildOutput.toString().trim()
             );
         }
 
@@ -656,19 +580,139 @@ public class PreviewService {
         );
     }
 
-    // ============================================================
+
+    // BUILD WITH AI REPAIR
+    private void runNpmBuildWithAiRepair(
+            Path workingDirectory,
+            String projectId
+    ) throws Exception {
+
+        final int maxAttempts = 3;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+
+            System.out.println(
+                    "[Preview] Build attempt "
+                            + attempt
+                            + "/"
+                            + maxAttempts
+            );
+
+            try {
+
+                runNpmBuild(
+                        workingDirectory
+                );
+
+                System.out.println(
+                        "[Preview] Build successful on attempt "
+                                + attempt
+                );
+
+                return;
+
+            } catch (Exception buildException) {
+
+                String buildError =
+                        buildException.getMessage();
+
+                System.out.println(
+                        "[Preview] Build failed on attempt "
+                                + attempt
+                );
+
+                System.out.println(
+                        "[Preview] Build error: "
+                                + buildError
+                );
+
+                if (attempt == maxAttempts) {
+
+                    throw new RuntimeException(
+                            "React build failed after "
+                                    + maxAttempts
+                                    + " attempts: "
+                                    + buildError,
+                            buildException
+                    );
+                }
+
+                System.out.println(
+                        "[Preview AI] Sending build error to AI..."
+                );
+
+                List<ProjectFile> projectFiles =
+                        projectFileRepository
+                                .findByProjectId(projectId);
+
+                AiCodeRepairService.RepairResult repairResult =
+                        aiCodeRepairService.repairBuildError(
+                                buildError,
+                                projectFiles
+                        );
+
+                System.out.println(
+                        "[Preview AI] AI selected file: "
+                                + repairResult.filePath()
+                );
+
+                System.out.println(
+                        "[Preview AI] Explanation: "
+                                + repairResult.explanation()
+                );
+
+                ProjectFile projectFile =
+                        projectFiles.stream()
+                                .filter(file ->
+                                        file.getFilePath()
+                                                .equals(
+                                                        repairResult.filePath()
+                                                )
+                                )
+                                .findFirst()
+                                .orElseThrow(() ->
+                                        new RuntimeException(
+                                                "AI selected a file that does not exist: "
+                                                        + repairResult.filePath()
+                                        )
+                                );
+
+                // Save corrected code to database
+                projectFile.setContent(
+                        repairResult.correctedCode()
+                );
+
+                projectFileRepository.save(
+                        projectFile
+                );
+
+                // Write corrected code to preview directory
+                writeProjectFile(
+                        workingDirectory,
+                        projectFile
+                );
+
+                System.out.println(
+                        "[Preview AI] File repaired successfully: "
+                                + repairResult.filePath()
+                );
+
+                System.out.println(
+                        "[Preview AI] Retrying build..."
+                );
+            }
+        }
+    }
+
+
+
     // SERVE PREVIEW FILE
-    // ============================================================
 
     public ResponseEntity<Resource> servePreviewFile(
             String projectId,
             String token,
             String requestedPath
     ) {
-
-        // --------------------------------------------------------
-        // Validate token
-        // --------------------------------------------------------
 
         String storedToken =
                 previewTokens.get(
@@ -685,10 +729,6 @@ public class PreviewService {
 
         try {
 
-            // ----------------------------------------------------
-            // Get preview directory
-            // ----------------------------------------------------
-
             Path rootDirectory =
                     previewDirectories.get(
                             projectId
@@ -701,10 +741,6 @@ public class PreviewService {
                         .status(HttpStatus.NOT_FOUND)
                         .build();
             }
-
-            // ----------------------------------------------------
-            // Get dist directory
-            // ----------------------------------------------------
 
             Path distDirectory =
                     rootDirectory
@@ -719,10 +755,6 @@ public class PreviewService {
                         .build();
             }
 
-            // ----------------------------------------------------
-            // Clean requested path
-            // ----------------------------------------------------
-
             String cleanPath =
                     requestedPath == null
                             ? ""
@@ -734,36 +766,16 @@ public class PreviewService {
                         cleanPath.substring(1);
             }
 
-            // Decode accidental leading slash if necessary
             cleanPath =
                     cleanPath.replace(
                             "\\",
                             "/"
                     );
 
-            // ----------------------------------------------------
-            // Resolve requested file
-            // ----------------------------------------------------
-
             Path requestedFile =
                     distDirectory
                             .resolve(cleanPath)
                             .normalize();
-
-            // ----------------------------------------------------
-            // Security check
-            // ----------------------------------------------------
-
-            System.out.println("[Preview DEBUG] distDirectory = "
-                    + distDirectory.toAbsolutePath());
-
-            System.out.println("[Preview DEBUG] requestedFile = "
-                    + requestedFile.toAbsolutePath());
-
-            System.out.println("[Preview DEBUG] startsWith = "
-                    + requestedFile.startsWith(
-                    distDirectory.normalize()
-            ));
 
             if (!requestedFile.startsWith(
                     distDirectory.normalize()
@@ -774,10 +786,6 @@ public class PreviewService {
                         .build();
             }
 
-            // ====================================================
-            // ROOT -> index.html
-            // ====================================================
-
             if (cleanPath.isEmpty()
                     || cleanPath.equals("/")) {
 
@@ -787,21 +795,8 @@ public class PreviewService {
                         );
             }
 
-            // ====================================================
-            // FILE DOES NOT EXIST
-            // ====================================================
-
             if (!Files.exists(requestedFile)
                     || Files.isDirectory(requestedFile)) {
-
-                /*
-                 * IMPORTANT:
-                 *
-                 * Only use SPA fallback for routes.
-                 *
-                 * Do NOT return index.html when the browser
-                 * requests a missing .js/.css/.png/etc.
-                 */
 
                 if (hasFileExtension(cleanPath)) {
 
@@ -815,16 +810,11 @@ public class PreviewService {
                             .build();
                 }
 
-                // SPA route fallback
                 requestedFile =
                         distDirectory.resolve(
                                 "index.html"
                         );
             }
-
-            // ----------------------------------------------------
-            // Final existence check
-            // ----------------------------------------------------
 
             if (!Files.exists(requestedFile)
                     || Files.isDirectory(requestedFile)) {
@@ -833,10 +823,6 @@ public class PreviewService {
                         .status(HttpStatus.NOT_FOUND)
                         .build();
             }
-
-            // ----------------------------------------------------
-            // Create Resource
-            // ----------------------------------------------------
 
             Resource resource =
                     new UrlResource(
@@ -851,63 +837,17 @@ public class PreviewService {
                         .build();
             }
 
-            // ----------------------------------------------------
-            // Determine MIME type
-            // ----------------------------------------------------
-
             MediaType mediaType =
                     determineMediaType(
                             requestedFile
                     );
 
             System.out.println(
-                    "[Preview DEBUG] projectId = " + projectId
-            );
-
-            System.out.println(
-                    "[Preview DEBUG] token = " + token
-            );
-
-            System.out.println(
-                    "[Preview DEBUG] requestedPath = " + requestedPath
-            );
-
-            System.out.println(
-                    "[Preview DEBUG] cleanPath = " + cleanPath
-            );
-
-            System.out.println(
-                    "[Preview DEBUG] requestedFile = "
-                            + requestedFile.toAbsolutePath()
-            );
-
-            System.out.println(
-                    "[Preview DEBUG] exists = "
-                            + Files.exists(requestedFile)
-            );
-
-            System.out.println(
-                    "[Preview DEBUG] MIME = "
-                            + mediaType
-            );
-
-            System.out.println(
                     "[Preview] Serving: "
                             + requestedFile.getFileName()
                             + " | MIME: "
                             + mediaType
             );
-
-            System.out.println(
-                    "[Preview] Serving: "
-                            + requestedFile.getFileName()
-                            + " | MIME: "
-                            + mediaType
-            );
-
-            // ----------------------------------------------------
-            // Return resource
-            // ----------------------------------------------------
 
             return ResponseEntity
                     .ok()
@@ -940,9 +880,7 @@ public class PreviewService {
         }
     }
 
-    // ============================================================
     // DETERMINE MIME TYPE
-    // ============================================================
 
     private MediaType determineMediaType(
             Path file
@@ -955,19 +893,11 @@ public class PreviewService {
                                 Locale.ROOT
                         );
 
-        // --------------------------------------------------------
-        // HTML
-        // --------------------------------------------------------
-
         if (fileName.endsWith(".html")
                 || fileName.endsWith(".htm")) {
 
             return MediaType.TEXT_HTML;
         }
-
-        // --------------------------------------------------------
-        // CSS
-        // --------------------------------------------------------
 
         if (fileName.endsWith(".css")) {
 
@@ -975,10 +905,6 @@ public class PreviewService {
                     "text/css"
             );
         }
-
-        // --------------------------------------------------------
-        // JavaScript
-        // --------------------------------------------------------
 
         if (fileName.endsWith(".js")
                 || fileName.endsWith(".mjs")) {
@@ -988,18 +914,10 @@ public class PreviewService {
             );
         }
 
-        // --------------------------------------------------------
-        // JSON
-        // --------------------------------------------------------
-
         if (fileName.endsWith(".json")) {
 
             return MediaType.APPLICATION_JSON;
         }
-
-        // --------------------------------------------------------
-        // SVG
-        // --------------------------------------------------------
 
         if (fileName.endsWith(".svg")) {
 
@@ -1008,20 +926,12 @@ public class PreviewService {
             );
         }
 
-        // --------------------------------------------------------
-        // PNG
-        // --------------------------------------------------------
-
         if (fileName.endsWith(".png")) {
 
             return MediaType.valueOf(
                     "image/png"
             );
         }
-
-        // --------------------------------------------------------
-        // JPEG
-        // --------------------------------------------------------
 
         if (fileName.endsWith(".jpg")
                 || fileName.endsWith(".jpeg")) {
@@ -1031,20 +941,12 @@ public class PreviewService {
             );
         }
 
-        // --------------------------------------------------------
-        // GIF
-        // --------------------------------------------------------
-
         if (fileName.endsWith(".gif")) {
 
             return MediaType.valueOf(
                     "image/gif"
             );
         }
-
-        // --------------------------------------------------------
-        // WEBP
-        // --------------------------------------------------------
 
         if (fileName.endsWith(".webp")) {
 
@@ -1053,20 +955,12 @@ public class PreviewService {
             );
         }
 
-        // --------------------------------------------------------
-        // ICO
-        // --------------------------------------------------------
-
         if (fileName.endsWith(".ico")) {
 
             return MediaType.valueOf(
                     "image/x-icon"
             );
         }
-
-        // --------------------------------------------------------
-        // WOFF
-        // --------------------------------------------------------
 
         if (fileName.endsWith(".woff")) {
 
@@ -1075,10 +969,6 @@ public class PreviewService {
             );
         }
 
-        // --------------------------------------------------------
-        // WOFF2
-        // --------------------------------------------------------
-
         if (fileName.endsWith(".woff2")) {
 
             return MediaType.valueOf(
@@ -1086,20 +976,12 @@ public class PreviewService {
             );
         }
 
-        // --------------------------------------------------------
-        // TTF
-        // --------------------------------------------------------
-
         if (fileName.endsWith(".ttf")) {
 
             return MediaType.valueOf(
                     "font/ttf"
             );
         }
-
-        // --------------------------------------------------------
-        // Default
-        // --------------------------------------------------------
 
         try {
 
@@ -1115,15 +997,12 @@ public class PreviewService {
             }
 
         } catch (Exception ignored) {
-            // Fall through to octet-stream
         }
 
         return MediaType.APPLICATION_OCTET_STREAM;
     }
 
-    // ============================================================
     // CHECK WHETHER PATH HAS FILE EXTENSION
-    // ============================================================
 
     private boolean hasFileExtension(
             String path
@@ -1144,9 +1023,7 @@ public class PreviewService {
                 && !fileName.endsWith(".");
     }
 
-    // ============================================================
     // STOP PREVIEW
-    // ============================================================
 
     public void stopPreview(
             String projectId,
@@ -1164,7 +1041,6 @@ public class PreviewService {
                         )
                 );
 
-        // Remove public token
         previewTokens.remove(
                 projectId
         );
@@ -1173,18 +1049,9 @@ public class PreviewService {
                 "[Preview] Preview stopped for project: "
                         + projectId
         );
-
-        /*
-         * Directory intentionally remains.
-         *
-         * This allows node_modules and the generated
-         * project files to be reused on the next preview.
-         */
     }
 
-    // ============================================================
     // WINDOWS CHECK
-    // ============================================================
 
     private boolean isWindows() {
 

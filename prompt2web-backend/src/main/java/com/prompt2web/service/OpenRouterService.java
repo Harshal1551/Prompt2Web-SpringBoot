@@ -52,7 +52,10 @@ public class OpenRouterService {
                                 "role", "user",
                                 "content", prompt
                         )
-                }
+                },
+                "response_format", Map.of(
+                        "type", "json_object"
+                )
         );
 
         String response = webClient.post()
@@ -222,6 +225,32 @@ public class OpenRouterService {
                 35. fileName must contain only the filename.
 
                 36. language must identify the file language.
+                
+                37. The generated Vite project MUST use a relative public base path because
+                    the application will be served under a dynamic preview URL.
+                
+                38. Generate a vite.config.js file containing:
+                
+                    import { defineConfig } from 'vite';
+                    import react from '@vitejs/plugin-react';
+                
+                    export default defineConfig({
+                      plugins: [react()],
+                      base: './'
+                    });
+                
+                39. The package.json MUST include:
+                    "@vitejs/plugin-react"
+                    "vite"
+                    "react"
+                    "react-dom"
+                
+                40. The Vite build MUST work correctly when served from a nested URL.
+                
+                41. Never use an absolute "/" base path for Vite assets.
+                
+                42. All generated production asset URLs must be relative to the
+                    current preview directory.
 
                 ============================================================
                 REQUIRED BASIC FILES
@@ -265,6 +294,82 @@ public class OpenRouterService {
                 - the project can run npm run build
 
                 Return ONLY the JSON object.
+                
+                ============================================================
+                DEPENDENCY CONSISTENCY RULE
+                ============================================================
+                
+                Before returning the final JSON, inspect EVERY generated source file.
+                
+                For every npm import such as:
+                
+                import x from "package-name";
+                import { x } from "package-name";
+                import "package-name";
+                
+                the package MUST exist in package.json.
+                
+                Examples:
+                
+                If source code imports:
+                "react-hot-toast"
+                
+                then package.json MUST contain:
+                "react-hot-toast": "<valid compatible version>"
+                
+                If source code imports:
+                "lucide-react"
+                
+                then package.json MUST contain:
+                "lucide-react": "<valid compatible version>"
+                
+                If source code imports:
+                "react-router-dom"
+                
+                then package.json MUST contain:
+                "react-router-dom": "<valid compatible version>"
+                
+                Never generate an npm import without adding the dependency.
+                
+                Do not add unused dependencies unless required.
+                
+                Before returning the final JSON, perform a dependency consistency check.
+                
+                ============================================================
+                JAVASCRIPT / JSX VALIDATION RULE
+                ============================================================
+                
+                All generated .js and .jsx files MUST contain syntactically valid
+                JavaScript and JSX.
+                
+                Pay special attention to:
+                
+                - parentheses
+                - curly braces
+                - square brackets
+                - JSX opening and closing tags
+                - map() expressions
+                - conditional rendering
+                - arrow functions
+                - object literals
+                - arrays
+                - template literals
+                - imports and exports
+                
+                For every:
+                
+                array.map((item) => (
+                    <Component />
+                ))
+                
+                make sure all parentheses and JSX tags are correctly closed.
+                
+                Never generate malformed JSX.
+                
+                Do not return incomplete JSX expressions.
+                
+                Before returning the final JSON, mentally validate every .js and .jsx
+                file for syntax correctness.
                 """;
 
         String completePrompt =

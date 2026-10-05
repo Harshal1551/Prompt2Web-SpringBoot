@@ -257,7 +257,7 @@ public class GeneratedFileService {
         boolean indexHtmlFound = false;
         boolean mainJsxFound = false;
         boolean appJsxFound = false;
-
+        boolean viteConfigFound = false;
 
         for (GeneratedFileResponse file :
                 generatedProject.getFiles()) {
@@ -296,6 +296,10 @@ public class GeneratedFileService {
             )) {
                 appJsxFound = true;
             }
+
+            if (normalizedPath.equals("vite.config.js")) {
+                viteConfigFound = true;
+            }
         }
 
 
@@ -326,5 +330,12 @@ public class GeneratedFileService {
                     "AI project is missing src/App.jsx"
             );
         }
+
+        if (!viteConfigFound) {
+            throw new RuntimeException(
+                    "AI project is missing vite.config.js"
+            );
+        }
+
     }
 }
