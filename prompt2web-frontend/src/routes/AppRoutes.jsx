@@ -4,6 +4,7 @@ import Login from "../pages/auth/Login";
 import Register from "../pages/auth/Register";
 import Dashboard from "../pages/dashboard/Dashboard";
 import Workspace from "../pages/workspace/Workspace";
+import Landing from "../pages/Landing";
 
 const AppRoutes = () => {
     return (
@@ -33,7 +34,7 @@ const AppRoutes = () => {
                 {/* Default route */}
                 <Route
                     path="*"
-                    element={<div>Prompt2Web</div>}
+                    element={<Landing/>}
                 />
 
             </Routes>
