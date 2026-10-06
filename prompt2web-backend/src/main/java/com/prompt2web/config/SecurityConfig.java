@@ -158,7 +158,8 @@ public class SecurityConfig {
                                                 "/api/auth/register",
                                                 "/api/auth/login",
                                                 "/api/ai/test",
-                                                "/api/ai/website-test"
+                                                "/api/ai/website-test",
+                                                "/api/health"
                                         )
                                         .permitAll()
 
