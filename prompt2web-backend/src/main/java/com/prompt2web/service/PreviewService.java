@@ -362,25 +362,19 @@ public class PreviewService {
     ) throws Exception {
 
         Path packageJson =
-                workingDirectory.resolve(
-                        "package.json"
-                );
+                workingDirectory.resolve("package.json");
+
+        Path packageLock =
+                workingDirectory.resolve("package-lock.json");
 
         Path nodeModules =
-                workingDirectory.resolve(
-                        "node_modules"
-                );
+                workingDirectory.resolve("node_modules");
 
         Path installSignature =
-                workingDirectory.resolve(
-                        ".prompt2web-install-signature"
-                );
+                workingDirectory.resolve(".prompt2web-install-signature");
 
         if (!Files.exists(packageJson)) {
-
-            throw new RuntimeException(
-                    "package.json not found"
-            );
+            throw new RuntimeException("package.json not found");
         }
 
         String packageContent =
@@ -389,10 +383,13 @@ public class PreviewService {
                         StandardCharsets.UTF_8
                 );
 
+        // Include the lock file in the signature when available.
+        String lockContent = Files.exists(packageLock)
+                ? Files.readString(packageLock, StandardCharsets.UTF_8)
+                : "";
+
         String currentSignature =
-                createHash(
-                        packageContent
-                );
+                createHash(packageContent + "\n" + lockContent);
 
         if (Files.exists(nodeModules)
                 && Files.exists(installSignature)) {
@@ -403,25 +400,17 @@ public class PreviewService {
                             StandardCharsets.UTF_8
                     );
 
-            if (savedSignature.equals(
-                    currentSignature
-            )) {
-
+            if (savedSignature.equals(currentSignature)) {
                 System.out.println(
                         "[Preview] Dependencies already installed."
                 );
-
                 return;
             }
         }
 
-        System.out.println(
-                "[Preview] Installing dependencies..."
-        );
+        System.out.println("[Preview] Installing dependencies...");
 
-        runNpmInstall(
-                workingDirectory
-        );
+        runNpmInstall(workingDirectory);
 
         Files.writeString(
                 installSignature,
@@ -435,6 +424,7 @@ public class PreviewService {
                 "[Preview] Dependency installation completed."
         );
     }
+
 
     // CREATE HASH
 
@@ -465,77 +455,76 @@ public class PreviewService {
             Path workingDirectory
     ) throws Exception {
 
-        String npmCommand =
-                isWindows()
-                        ? "npm.cmd"
-                        : "npm";
+        String npmCommand = isWindows() ? "npm.cmd" : "npm";
 
-        ProcessBuilder processBuilder =
-                new ProcessBuilder(
-                        npmCommand,
-                        "install",
-                        "--no-audit",
-                        "--no-fund"
-                );
+        Path packageLock =
+                workingDirectory.resolve("package-lock.json");
 
-        processBuilder.directory(
-                workingDirectory.toFile()
-        );
+        ProcessBuilder processBuilder;
 
-        processBuilder.redirectErrorStream(
-                true
-        );
+        if (Files.exists(packageLock)) {
+            System.out.println(
+                    "[Preview] Using npm ci with package-lock.json."
+            );
 
-        Process process =
-                processBuilder.start();
+            processBuilder = new ProcessBuilder(
+                    npmCommand,
+                    "ci",
+                    "--no-audit",
+                    "--no-fund"
+            );
+        } else {
+            System.out.println(
+                    "[Preview] package-lock.json not found; using npm install."
+            );
 
-        try (
-                BufferedReader reader =
-                        new BufferedReader(
-                                new InputStreamReader(
-                                        process.getInputStream(),
-                                        StandardCharsets.UTF_8
-                                )
-                        )
-        ) {
+            processBuilder = new ProcessBuilder(
+                    npmCommand,
+                    "install",
+                    "--no-audit",
+                    "--no-fund"
+            );
+        }
+
+        processBuilder.directory(workingDirectory.toFile());
+        processBuilder.redirectErrorStream(true);
+
+        Process process = processBuilder.start();
+
+        try (BufferedReader reader =
+                     new BufferedReader(
+                             new InputStreamReader(
+                                     process.getInputStream(),
+                                     StandardCharsets.UTF_8
+                             )
+                     )) {
 
             String line;
 
-            while (
-                    (line = reader.readLine())
-                            != null
-            ) {
-
-                System.out.println(
-                        "[Preview npm] "
-                                + line
-                );
+            while ((line = reader.readLine()) != null) {
+                System.out.println("[Preview npm] " + line);
             }
         }
 
         boolean finished =
-                process.waitFor(
-                        5,
-                        TimeUnit.MINUTES
-                );
+                process.waitFor(5, TimeUnit.MINUTES);
 
         if (!finished) {
-
             process.destroyForcibly();
 
             throw new RuntimeException(
-                    "npm install timed out"
+                    "npm dependency installation timed out"
             );
         }
 
         if (process.exitValue() != 0) {
-
             throw new RuntimeException(
-                    "npm install failed with exit code "
+                    "npm dependency installation failed with exit code "
                             + process.exitValue()
             );
         }
     }
+
 
 
     // NPM BUILD
