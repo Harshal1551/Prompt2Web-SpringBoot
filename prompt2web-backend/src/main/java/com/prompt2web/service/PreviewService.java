@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -486,8 +487,20 @@ public class PreviewService {
             );
         }
 
+
         processBuilder.directory(workingDirectory.toFile());
+
+// Reuse downloaded npm packages across different projects.
+        String npmCacheDirectory = System.getProperty("user.home")
+                + File.separator + ".prompt2web-npm-cache";
+
+        processBuilder.environment().put(
+                "npm_config_cache",
+                npmCacheDirectory
+        );
+
         processBuilder.redirectErrorStream(true);
+
 
         Process process = processBuilder.start();
 
