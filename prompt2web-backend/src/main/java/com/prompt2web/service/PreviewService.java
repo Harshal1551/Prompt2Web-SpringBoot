@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.Comparator;
 
 @Service
 @RequiredArgsConstructor
@@ -48,6 +49,10 @@ public class PreviewService {
     // PREVIEW TOKENS
 
     private final Map<String, String> previewTokens =
+            new ConcurrentHashMap<>();
+
+    // Track the signature of the last successful production build.
+    private final Map<String, String> successfulBuildSignatures =
             new ConcurrentHashMap<>();
 
     // START PREVIEW
@@ -112,6 +117,32 @@ public class PreviewService {
         }
     }
 
+
+    private String createProjectFilesHash(List<ProjectFile> files)
+            throws Exception {
+
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+
+        files.stream()
+                .sorted(Comparator.comparing(ProjectFile::getFilePath))
+                .forEach(file -> {
+                    String path = file.getFilePath() == null
+                            ? ""
+                            : file.getFilePath();
+
+                    String content = file.getContent() == null
+                            ? ""
+                            : file.getContent();
+
+                    digest.update(path.getBytes(StandardCharsets.UTF_8));
+                    digest.update((byte) 0);
+                    digest.update(content.getBytes(StandardCharsets.UTF_8));
+                    digest.update((byte) 0);
+                });
+
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
     // BUILD PREVIEW
 
     public void buildPreview(
@@ -151,57 +182,75 @@ public class PreviewService {
                 rootDirectory
         );
 
-        for (ProjectFile file : files) {
+        // Calculate the signature of the current database files.
+        String currentSignature = createProjectFilesHash(files);
 
-            writeProjectFile(
-                    rootDirectory,
-                    file
+// Check whether a valid previous build can be reused.
+        Path distDirectory = rootDirectory.resolve("dist");
+        Path distIndex = distDirectory.resolve("index.html");
+
+        String previousSignature =
+                successfulBuildSignatures.get(projectId);
+
+        boolean canReuseBuild =
+                currentSignature.equals(previousSignature)
+                        && Files.isRegularFile(distIndex);
+
+        if (canReuseBuild) {
+
+            System.out.println(
+                    "[Preview] Project files unchanged. Reusing previous build."
             );
-        }
 
-        Path packageJson =
-                rootDirectory.resolve(
-                        "package.json"
-                );
+        } else {
 
-        if (!Files.exists(packageJson)) {
-
-            throw new RuntimeException(
-                    "Generated project does not contain package.json"
+            System.out.println(
+                    "[Preview] Project files changed or no cached build exists."
             );
-        }
 
-        installDependenciesIfRequired(
-                rootDirectory
-        );
+            // Write current database content to the preview directory.
+            for (ProjectFile file : files) {
+                writeProjectFile(rootDirectory, file);
+            }
 
-        runNpmBuildWithAiRepair(
-                rootDirectory,
-                projectId
-        );
+            Path packageJson = rootDirectory.resolve("package.json");
 
-        Path distDirectory =
-                rootDirectory.resolve("dist");
-
-        Path distIndex =
-                distDirectory.resolve(
-                        "index.html"
+            if (!Files.isRegularFile(packageJson)) {
+                throw new RuntimeException(
+                        "Generated project does not contain package.json"
                 );
+            }
 
-        if (!Files.exists(distDirectory)
-                || !Files.exists(distIndex)) {
+            installDependenciesIfRequired(rootDirectory);
 
-            throw new RuntimeException(
-                    "React build completed but dist/index.html was not created."
+            runNpmBuildWithAiRepair(rootDirectory, projectId);
+
+            if (!Files.isRegularFile(distIndex)) {
+                throw new RuntimeException(
+                        "React build completed but dist/index.html was not created."
+                );
+            }
+
+            // Save the signature only after a successful build.
+            // AI repair may have changed files in the database, so reload them.
+            List<ProjectFile> updatedFiles =
+                    projectFileRepository.findByProjectId(projectId);
+
+            String successfulSignature =
+                    createProjectFilesHash(updatedFiles);
+
+            successfulBuildSignatures.put(
+                    projectId,
+                    successfulSignature
+            );
+
+            System.out.println(
+                    "[Preview] Successful build signature saved."
             );
         }
 
         System.out.println(
-                "[Preview] Production build completed."
-        );
-
-        System.out.println(
-                "[Preview] Dist directory: "
+                "[Preview] Preview build is ready: "
                         + distDirectory.toAbsolutePath()
         );
     }
