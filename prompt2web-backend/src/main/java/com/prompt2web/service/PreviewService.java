@@ -190,12 +190,44 @@ public class PreviewService {
         Path distDirectory = rootDirectory.resolve("dist");
         Path distIndex = distDirectory.resolve("index.html");
 
+
         String previousSignature =
                 successfulBuildSignatures.get(projectId);
 
+        boolean signatureMatches =
+                currentSignature.equals(previousSignature);
+
+        boolean distIndexExists =
+                Files.isRegularFile(distIndex);
+
+        System.out.println(
+                "[Preview Cache] Current signature exists: "
+                        + (currentSignature != null)
+        );
+
+        System.out.println(
+                "[Preview Cache] Previous signature exists: "
+                        + (previousSignature != null)
+        );
+
+        System.out.println(
+                "[Preview Cache] Signatures match: "
+                        + signatureMatches
+        );
+
+        System.out.println(
+                "[Preview Cache] dist/index.html exists: "
+                        + distIndexExists
+        );
+
+        System.out.println(
+                "[Preview Cache] Preview directory exists: "
+                        + Files.isDirectory(rootDirectory)
+        );
+
         boolean canReuseBuild =
-                currentSignature.equals(previousSignature)
-                        && Files.isRegularFile(distIndex);
+                signatureMatches && distIndexExists;
+
 
         if (canReuseBuild) {
 
