@@ -502,6 +502,8 @@ public class PreviewService {
         processBuilder.redirectErrorStream(true);
 
 
+        long installStartTime = System.nanoTime();
+
         Process process = processBuilder.start();
 
         try (BufferedReader reader =
@@ -536,6 +538,16 @@ public class PreviewService {
                             + process.exitValue()
             );
         }
+
+        long installDurationSeconds =
+                TimeUnit.NANOSECONDS.toSeconds(
+                        System.nanoTime() - installStartTime
+                );
+
+        System.out.println(
+                "[Preview Performance] npm install duration: "
+                        + installDurationSeconds + " seconds"
+        );
     }
 
 
